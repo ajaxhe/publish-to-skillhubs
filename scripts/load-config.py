@@ -71,6 +71,7 @@ def load_config(skill_dir: Path) -> dict:
         tags = [t.strip() for t in fm["tags"].split(",") if t.strip()]
 
     clawscan_note = cfg.get("clawscan_note", "")
+    clawhub_owner = cfg.get("clawhub_owner") or (github_repo.split("/", 1)[0] if "/" in github_repo else "")
     pr_description = cfg.get("pr_description", f"Add {skill_name} skill.\n\nSource: https://github.com/{github_repo}")
     platforms = cfg.get(
         "platforms",
@@ -92,6 +93,7 @@ def load_config(skill_dir: Path) -> dict:
         "github_repo": github_repo,
         "github_repo_url": f"https://github.com/{github_repo}" if github_repo else "",
         "clawscan_note": clawscan_note,
+        "clawhub_owner": clawhub_owner,
         "pr_description": pr_description,
         "platforms": platforms,
         "description": fm.get("description", ""),

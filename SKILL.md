@@ -98,7 +98,8 @@ bash ~/.agents/skills/publish-to-skillhubs/scripts/prepare-clawhub-staging.sh \
   --staging-dir /path/to/project/.codebuddy/skills/<name>-clawhub
 ```
 
-从 staging 目录发布到 ClawHub；**绝不修改原始 skill 目录**。
+主发布脚本会自动创建临时 staging、从 staging 发布并在结束后清理；**绝不修改原始
+skill 目录**。非交互模式如未登录会立即失败，不会自动打开 OAuth 并无限等待。
 
 ### Step 3：执行发布
 
@@ -109,12 +110,16 @@ bash "$PUBLISH_SKILLHUBS" --skill-dir "<绝对路径>" --platform all
 
 非交互环境加 `--yes`；首次认证失败时引导用户运行 `setup-tokens.sh`。
 
+发布脚本必须支持幂等重跑：已存在的同版本视为成功；单个平台失败时继续执行其余平台，
+最终汇总失败平台并返回非零退出码。agentskillhub.dev 必须先调用仓库 analyze API，
+使用平台返回的真实路径（根目录 Skill 的路径是空字符串，不是 `.`）。
+
 ### Step 4：汇报结果
 
-列出各平台链接：
+只列出真实结果；不得在失败后仍打印“完成”。各平台链接：
 
-- `https://clawhub.ai/skills/<skill_name>`
-- `https://agentskillhub.dev/skills/<skill_name>`
+- `https://clawhub.ai/<clawhub_owner>/skills/<skill_name>`
+- `https://agentskillhub.dev/u/<username>/sk/<skill_name>`
 - `https://skills-hub.ai/skills/<skill_name>`
 
 ## 项目内软链模式（贾维斯等）

@@ -14,12 +14,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOAD_CONFIG="$SCRIPT_DIR/load-config.py"
+PREPARE_CLAWHUB="$SCRIPT_DIR/prepare-clawhub-staging.sh"
 
 SKILL_DIR=""
 DRY_RUN=false
 TARGET_PLATFORM="all"
 ASSUME_YES=false
 SKIP_GIT_PUSH=false
+FAILED_PLATFORMS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -73,6 +75,7 @@ GITHUB_REPO="$(read_cfg github_repo)"
 GITHUB_REPO_URL="$(read_cfg github_repo_url)"
 TAGS="$(read_cfg_list tags)"
 CLAWSCAN_NOTE="$(read_cfg clawscan_note)"
+CLAWHUB_OWNER="$(read_cfg clawhub_owner)"
 PR_DESCRIPTION="$(read_cfg pr_description)"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'; BOLD='\033[1m'
@@ -128,6 +131,8 @@ if [ "$SKIP_GIT_PUSH" = false ] && [ -d "$SKILL_DIR/.git" ]; then
       log_info "已与 GitHub 同步"
     fi
   fi
+elif [ "$SKIP_GIT_PUSH" = false ] && [ ! -d "$SKILL_DIR/.git" ]; then
+  log_warn "Skill 目录不是 Git 工作区，无法校验本地内容是否已推送；将使用 ${GITHUB_REPO_URL:-配置中的远端仓库}"
 fi
 
 publish_agentskillhub() {
@@ -138,46 +143,73 @@ publish_agentskillhub() {
   if [ -z "$GITHUB_REPO" ]; then log_warn "缺少 github_repo，跳过"; return; fi
 
   SKHUB_AUTH="$HOME/.skhub/auth.json"
-  AUTH_HEADER=""
-  if [ -f "$SKHUB_AUTH" ]; then
-    SKHUB_TOKEN=$(python3 -c "
-import json
-for cred in json.load(open('$SKHUB_AUTH')).get('credentials',{}).values():
-    if cred.get('token'): print(cred['token']); break
-" 2>/dev/null || echo "")
-    [ -n "$SKHUB_TOKEN" ] && AUTH_HEADER="Authorization: Bearer ${SKHUB_TOKEN}"
-  fi
-
-  CURL_AUTH=()
-  [ -n "$AUTH_HEADER" ] && CURL_AUTH=(-H "$AUTH_HEADER")
 
   if [ "$DRY_RUN" = true ]; then
-    echo "[DRY RUN] POST import repoFullName=${GITHUB_REPO} selectedPaths=[${SKILL_NAME}]"
+    echo "[DRY RUN] POST analyze url=${GITHUB_REPO_URL}，再按检测到的 path 调用 import"
     return
   fi
 
-  IMPORT_BODY="{\"repoFullName\":\"${GITHUB_REPO}\",\"selectedPaths\":[\"${SKILL_NAME}\"]}"
-  # Root-level skill (SKILL.md at repo root): use repo name as path
-  if [ ! -d "${SKILL_DIR}/${SKILL_NAME}" ] && [ -f "${SKILL_DIR}/SKILL.md" ]; then
-    IMPORT_BODY="{\"repoFullName\":\"${GITHUB_REPO}\",\"selectedPaths\":[\".\"]}"
-  fi
+  # Always analyze first. AgentSkillHub represents a root-level SKILL.md as
+  # path "", not "."; guessing the path makes otherwise valid repositories fail.
+  python3 - "$GITHUB_REPO" "$GITHUB_REPO_URL" "$SKILL_NAME" "$SKHUB_AUTH" <<'PY'
+import json, sys, urllib.error, urllib.request
 
-  RESPONSE=$(curl -s -o /tmp/ash_import.json -w "%{http_code}" -X POST \
-    "https://agentskillhub.dev/api/v1/repos/import" \
-    -H "Content-Type: application/json" \
-    "${CURL_AUTH[@]}" \
-    -d "$IMPORT_BODY" || echo "000")
-  BODY=$(cat /tmp/ash_import.json 2>/dev/null || echo "{}")
-  echo "HTTP $RESPONSE: $(echo "$BODY" | head -c 300)"
+repo, repo_url, skill_name, auth_path = sys.argv[1:5]
+token = ""
+try:
+    credentials = json.load(open(auth_path)).get("credentials", {}).values()
+    token = next((item.get("token") for item in credentials if item.get("token")), "")
+except (FileNotFoundError, json.JSONDecodeError):
+    pass
+headers = {"Content-Type": "application/json"}
+if token:
+    headers["Authorization"] = f"Bearer {token}"
 
-  if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "201" ]; then
-    log_info "agentskillhub.dev 导入成功"
-  else
-    log_warn "agentskillhub.dev 导入失败（平台侧 GitHub 集成可能异常）"
-    echo "  → 手动导入: https://agentskillhub.dev"
-    echo "  → Add Skills → ${GITHUB_REPO_URL}"
-    echo "  → 或运行: skhub add ${GITHUB_REPO_URL}"
-  fi
+def post(path, payload):
+    request = urllib.request.Request(
+        f"https://agentskillhub.dev/api/v1/repos/{path}",
+        data=json.dumps(payload).encode(),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request) as response:
+            return response.status, json.loads(response.read() or b"{}")
+    except urllib.error.HTTPError as error:
+        raw = error.read()
+        try:
+            body = json.loads(raw or b"{}")
+        except json.JSONDecodeError:
+            body = {"error": raw.decode(errors="replace")[:500]}
+        return error.code, body
+
+code, analysis = post("analyze", {"url": repo_url})
+if code != 200:
+    print(f"❌ analyze HTTP {code}: {analysis}")
+    raise SystemExit(1)
+
+skills = analysis.get("skills") or []
+skill = next(
+    (item for item in skills if item.get("slug") == skill_name or item.get("name") == skill_name),
+    skills[0] if len(skills) == 1 else None,
+)
+if not skill:
+    print(f"❌ 仓库未检测到目标 Skill：{skill_name}；检测结果={skills}")
+    raise SystemExit(1)
+
+selected_path = skill.get("path", "")
+code, result = post(
+    "import",
+    {"repoFullName": analysis.get("repoFullName") or repo, "selectedPaths": [selected_path]},
+)
+failed = result.get("failed") or []
+if code not in (200, 201) or failed:
+    print(f"❌ import HTTP {code}: {result}")
+    raise SystemExit(1)
+
+counts = {key: len(result.get(key) or []) for key in ("imported", "updated", "reused")}
+print(f"✅ agentskillhub.dev 导入成功（path={selected_path!r}, {counts}）")
+PY
 }
 
 publish_skillshubai() {
@@ -198,7 +230,7 @@ publish_skillshubai() {
     return
   fi
 
-  python3 - "$SKILL_DIR" "$GITHUB_REPO_URL" "$SKILLSHUB_CONFIG" <<'PY'
+  if ! python3 - "$SKILL_DIR" "$GITHUB_REPO_URL" "$SKILLSHUB_CONFIG" <<'PY'
 import json, re, sys, urllib.request, urllib.error
 skill_dir, repo_url, cfg_path = sys.argv[1:4]
 token = json.load(open(cfg_path)).get("apiKey") or ""
@@ -264,10 +296,15 @@ elif code == 200:
 
 if code in (200, 201):
     print(f"✅ skills-hub.ai → https://skills-hub.ai/skills/{slug}")
+elif code == 409 and "already exists" in json.dumps(data).lower():
+    print(f"✅ skills-hub.ai 版本 {payload['version']} 已存在，无需重复发布")
 else:
     print(f"❌ skills-hub HTTP {code}: {data}")
     sys.exit(1)
 PY
+  then
+    return 1
+  fi
   log_info "skills-hub.ai 发布完成"
 }
 
@@ -281,22 +318,35 @@ publish_clawhub() {
     run_or_dry "npm install -g @clawhub/cli"
   fi
 
-  CLAWHUB_USER=$(clawhub whoami 2>/dev/null | grep -v '^-' | tr -d '[:space:]' || echo "")
   if [ "$DRY_RUN" = true ]; then
     echo "[DRY RUN] clawhub --workdir $(dirname "${SKILL_DIR}") publish ${SKILL_NAME} --version ${SKILL_VERSION}"
     return
   fi
 
-  if [ -n "$CLAWHUB_USER" ]; then
+  if CLAWHUB_USER=$(clawhub whoami 2>&1); then
+    CLAWHUB_USER=$(printf '%s\n' "$CLAWHUB_USER" | tr '\n' ' ')
     log_info "已登录 clawhub.ai（${CLAWHUB_USER}）"
   else
     log_warn "未登录 clawhub.ai — 需要 GitHub OAuth"
+    if [ "$ASSUME_YES" = true ]; then
+      log_error "非交互模式不会自动打开 OAuth；请先手动运行 clawhub login"
+      return 1
+    fi
     if ! confirm "运行 clawhub login？"; then return; fi
     clawhub login
-    if ! confirm "登录完成了吗？"; then return; fi
+    if ! clawhub whoami >/dev/null 2>&1; then
+      log_error "clawhub 登录校验失败"
+      return 1
+    fi
   fi
 
-  SKILLS_PARENT="$(dirname "${SKILL_DIR}")"
+  STAGING_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/publish-to-skillhubs.XXXXXX")
+  PUBLISH_DIR="${STAGING_ROOT}/${SKILL_NAME}"
+  if ! bash "$PREPARE_CLAWHUB" --skill-dir "$SKILL_DIR" --staging-dir "$PUBLISH_DIR"; then
+    rm -rf "$STAGING_ROOT"
+    return 1
+  fi
+  SKILLS_PARENT="$STAGING_ROOT"
   TAGS_CLAW="${TAGS},latest"
   CLAWSCAN_FLAG=""
   if [ -n "$CLAWSCAN_NOTE" ]; then
@@ -304,16 +354,29 @@ publish_clawhub() {
   fi
 
   if [ "$DRY_RUN" = false ]; then
-    run_or_dry "clawhub --workdir '${SKILLS_PARENT}' publish '${SKILL_NAME}' \
+    if ! run_or_dry "clawhub --workdir '${SKILLS_PARENT}' publish '${SKILL_NAME}' \
       --slug '${SKILL_NAME}' \
       --name '${DISPLAY_NAME}' \
       --version '${SKILL_VERSION}' \
       --changelog 'See README.md' \
       --tags '${TAGS_CLAW}' \
-      ${CLAWSCAN_FLAG}"
-    log_info "clawhub.ai → https://clawhub.ai/skills/${SKILL_NAME}"
+      ${CLAWSCAN_FLAG}"; then
+      rm -rf "$STAGING_ROOT"
+      return 1
+    fi
+    rm -rf "$STAGING_ROOT"
+    log_info "clawhub.ai → https://clawhub.ai/${CLAWHUB_OWNER}/skills/${SKILL_NAME}"
   else
     echo "[DRY RUN] clawhub --workdir ${SKILLS_PARENT} publish ${SKILL_NAME} --version ${SKILL_VERSION}"
+  fi
+}
+
+run_platform() {
+  local platform="$1"
+  shift
+  if ! "$@"; then
+    FAILED_PLATFORMS+=("$platform")
+    log_error "${platform} 发布失败，继续执行其他平台"
   fi
 }
 
@@ -371,15 +434,15 @@ log_section "开始发布 → ${TARGET_PLATFORM}"
 
 case "$TARGET_PLATFORM" in
   all)
-    publish_agentskillhub
-    publish_skillshubai
-    publish_clawhub
-    publish_agentskillshub_pr
+    run_platform agentskillhub.dev publish_agentskillhub
+    run_platform skills-hub.ai publish_skillshubai
+    run_platform clawhub.ai publish_clawhub
+    run_platform agent-skills-hub publish_agentskillshub_pr
     ;;
-  agentskillhub)   publish_agentskillhub ;;
-  skillshubai)     publish_skillshubai ;;
-  clawhub)         publish_clawhub ;;
-  agentskillshub)  publish_agentskillshub_pr ;;
+  agentskillhub)   run_platform agentskillhub.dev publish_agentskillhub ;;
+  skillshubai)     run_platform skills-hub.ai publish_skillshubai ;;
+  clawhub)         run_platform clawhub.ai publish_clawhub ;;
+  agentskillshub)  run_platform agent-skills-hub publish_agentskillshub_pr ;;
   *)
     log_error "未知平台: $TARGET_PLATFORM"
     echo "支持: all | agentskillhub | skillshubai | clawhub | agentskillshub"
@@ -387,10 +450,17 @@ case "$TARGET_PLATFORM" in
     ;;
 esac
 
-log_section "完成 🎉"
+if [ "${#FAILED_PLATFORMS[@]}" -gt 0 ]; then
+  log_section "部分平台失败"
+  log_error "失败平台: ${FAILED_PLATFORMS[*]}"
+else
+  log_section "完成 🎉"
+fi
 echo ""
 echo "📍 平台链接："
-echo "  clawhub.ai        → https://clawhub.ai/skills/${SKILL_NAME}"
-echo "  agentskillhub.dev → https://agentskillhub.dev/skills/${SKILL_NAME}"
+echo "  clawhub.ai        → https://clawhub.ai/${CLAWHUB_OWNER}/skills/${SKILL_NAME}"
+echo "  agentskillhub.dev → https://agentskillhub.dev/u/${GITHUB_REPO%%/*}/sk/${SKILL_NAME}"
 echo "  skills-hub.ai     → https://skills-hub.ai/skills/${SKILL_NAME}"
 echo "  agent-skills-hub  → https://github.com/agent-skills-hub/agent-skills-hub/pulls"
+
+[ "${#FAILED_PLATFORMS[@]}" -eq 0 ]

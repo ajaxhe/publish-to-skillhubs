@@ -6,7 +6,7 @@
 - **登录**: `clawhub login`（GitHub OAuth）
 - **发布**: `clawhub --workdir <skills-parent> publish <skill-name> --slug ... --version ...`
 - **约束**: 仅文本文件；需过滤图片、PDF、`config.json`
-- **链接**: https://clawhub.ai/skills/{skill_name}
+- **链接**: https://clawhub.ai/{clawhub_owner}/skills/{skill_name}
 
 ## agentskillhub.dev
 
@@ -50,4 +50,5 @@
 | `version` | 可选 | 默认 SKILL.md 或 1.0.0 |
 | `tags` | 可选 | 各平台标签 |
 | `category` | 可选 | skills-hub.ai 分类 |
+| `clawhub_owner` | 可选 | ClawHub 发布者 handle；默认取 `github_repo` owner |
 | `platforms.*.enabled` | 可选 | 按平台开关 |

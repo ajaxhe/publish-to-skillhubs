@@ -3,6 +3,7 @@
   "display_name": "Your Skill Display Name",
   "version": "1.0.0",
   "github_repo": "owner/your-skill-name",
+  "clawhub_owner": "owner",
   "category": "productivity",
   "tags": ["cursor", "agent", "automation"],
   "clawscan_note": "Brief note for ClawHub security scan (optional).",
