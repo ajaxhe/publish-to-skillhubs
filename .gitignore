@@ -1,0 +1,21 @@
+# OS / editor
+.DS_Store
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Local secrets / credentials (must never be committed)
+*.token
+auth.json
+config.json
+secrets.json
+.env
+.env.local
+
+# CI staging output
+.codebuddy/
+out/
+*.log

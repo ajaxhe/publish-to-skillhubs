@@ -1,0 +1,16 @@
+{
+  "skill_name": "your-skill-name",
+  "display_name": "Your Skill Display Name",
+  "version": "1.0.0",
+  "github_repo": "owner/your-skill-name",
+  "category": "productivity",
+  "tags": ["cursor", "agent", "automation"],
+  "clawscan_note": "Brief note for ClawHub security scan (optional).",
+  "pr_description": "Optional markdown body for agent-skills-hub PR.",
+  "platforms": {
+    "clawhub": { "enabled": true },
+    "agentskillhub": { "enabled": true },
+    "skillshubai": { "enabled": true },
+    "agentskillshub": { "enabled": false }
+  }
+}
