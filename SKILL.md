@@ -1,12 +1,10 @@
 ---
 name: publish-to-skillhubs
-description: >-
-  将任意 Agent Skill 一键发布到 ClawHub、agentskillhub.dev、skills-hub.ai、
+description: 将任意 Agent Skill 一键发布到 ClawHub、agentskillhub.dev、skills-hub.ai、
   agent-skills-hub 等平台。支持 publish.json 配置、ClawHub 干净副本、GitHub Actions CI。
-  当用户提到「发布 skill」「提交到 ClawHub/SkillHub」「扩大 skill 影响力」
-  「publish to skill platforms」时使用。
-disable-model-invocation: true
-version: "1.0.0"
+  当用户提到「发布 skill」「提交到 ClawHub/SkillHub」「扩大 skill 影响力」 「publish to skill
+  platforms」时使用。
+version: 1.0.0
 author: ajaxhe
 tags: publish, clawhub, skillhub, automation, ci
 ---
