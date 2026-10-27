@@ -9,6 +9,8 @@
 #   --dry-run
 #   --yes              跳过交互确认
 #   --skip-git-push    不自动 commit/push
+#   --skip-preflight   跳过发布前校验（不推荐）
+#   --preflight-strict 提示项也视为阻断
 
 set -euo pipefail
 
@@ -17,6 +19,7 @@ LOAD_CONFIG="$SCRIPT_DIR/load-config.py"
 LOAD_CREDENTIALS="$SCRIPT_DIR/load-credentials.py"
 PREPARE_CLAWHUB="$SCRIPT_DIR/prepare-clawhub-staging.sh"
 APPLY_META="$SCRIPT_DIR/apply-platform-meta.py"
+PREFLIGHT="$SCRIPT_DIR/preflight.py"
 
 # 统一凭证：~/.config/publish-to-skillhubs/credentials.json（PUBLISH_CREDENTIALS 可覆盖）。
 # 各平台原生配置文件仅作兜底，见 load-credentials.py。
@@ -27,6 +30,8 @@ DRY_RUN=false
 TARGET_PLATFORM="all"
 ASSUME_YES=false
 SKIP_GIT_PUSH=false
+SKIP_PREFLIGHT=false
+PREFLIGHT_STRICT=false
 FAILED_PLATFORMS=()
 
 while [[ $# -gt 0 ]]; do
@@ -36,8 +41,10 @@ while [[ $# -gt 0 ]]; do
     --platform) TARGET_PLATFORM="$2"; shift 2 ;;
     --yes) ASSUME_YES=true; shift ;;
     --skip-git-push) SKIP_GIT_PUSH=true; shift ;;
+    --skip-preflight) SKIP_PREFLIGHT=true; shift ;;
+    --preflight-strict) PREFLIGHT_STRICT=true; shift ;;
     -h|--help)
-      sed -n '2,12p' "$0"
+      sed -n '2,14p' "$0"
       exit 0
       ;;
     *)
@@ -612,9 +619,44 @@ Source: ${GITHUB_REPO_URL}"
   fi
 }
 
+# ── Step 1: 发布前严格校验 ───────────────────────────────────────────────
+# 校验用的规则（policy.py）和打包过滤是同一份，所以"校验通过"就等于"要上传的
+# 那些文件里没有本地产物 / 私有配置 / 凭证"。任何阻断项都直接中止，避免带脏包上平台。
+if [ "$SKIP_PREFLIGHT" = true ]; then
+  log_section "Step 1: 发布前校验"
+  log_warn "已通过 --skip-preflight 跳过校验（不推荐）"
+else
+  log_section "Step 1: 发布前校验"
+  PF_STATUS=0
+  python3 "$PREFLIGHT" "$SKILL_DIR" || PF_STATUS=$?
+
+  if [ "$PF_STATUS" -eq 1 ]; then
+    log_error "校验未通过，已中止发布（未向任何平台发送内容）"
+    echo "  逐项排查：python3 \"$PREFLIGHT\" \"$SKILL_DIR\""
+    echo "  确认无误后可强制跳过：--skip-preflight"
+    exit 1
+  elif [ "$PF_STATUS" -ne 0 ]; then
+    log_error "校验脚本异常退出（code=$PF_STATUS），为安全起见中止发布"
+    exit 1
+  fi
+
+  if [ "$PREFLIGHT_STRICT" = true ]; then
+    PF_JSON="$(python3 "$PREFLIGHT" "$SKILL_DIR" --json || true)"
+    PF_WARNS="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for f in d["findings"] if f["level"]=="warn"))' <<< "$PF_JSON" 2>/dev/null || echo 0)"
+    if [ "${PF_WARNS:-0}" -gt 0 ]; then
+      log_error "--preflight-strict：存在 ${PF_WARNS} 个提示项，按阻断处理"
+      exit 1
+    fi
+  fi
+
+  if ! confirm "校验通过，确认发布到 ${TARGET_PLATFORM}？"; then
+    log_warn "已取消"
+    exit 0
+  fi
+fi
+
 log_section "开始发布 → ${TARGET_PLATFORM}"
 [ "$DRY_RUN" = true ] && echo -e "${YELLOW}🔍 DRY RUN 模式${NC}\n"
-
 case "$TARGET_PLATFORM" in
   all)
     run_platform agentskillhub.dev publish_agentskillhub

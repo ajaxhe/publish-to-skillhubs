@@ -72,8 +72,22 @@ jobs:
               f.write(f"clawscan_note={note}\n")
           PY
 
+  # 发布前严格校验：与本地 publish-to-skillhubs.sh 的 Step 1 同一份策略。
+  # .github/skill-preflight/ 由 install-workflow.sh 一起安装，不会进 skill 包。
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Strict preflight
+        run: |
+          if [ ! -f .github/skill-preflight/preflight.py ]; then
+            echo "::error::缺少 .github/skill-preflight/preflight.py，请重跑 install-workflow.sh"
+            exit 1
+          fi
+          python3 .github/skill-preflight/preflight.py .
+
   publish-clawhub:
-    needs: load-config
+    needs: [load-config, preflight]
     name: clawhub.ai
     runs-on: ubuntu-latest
     if: ${{ github.event.inputs.platforms == '' || github.event.inputs.platforms == 'all' || contains(github.event.inputs.platforms, 'clawhub') }}
@@ -98,7 +112,7 @@ jobs:
             --no-input
 
   publish-agentskillhub:
-    needs: load-config
+    needs: [load-config, preflight]
     name: agentskillhub.dev
     runs-on: ubuntu-latest
     if: ${{ github.event.inputs.platforms == '' || github.event.inputs.platforms == 'all' || contains(github.event.inputs.platforms, 'agentskillhub') }}
@@ -117,7 +131,7 @@ jobs:
             || echo "⚠️ agentskillhub import failed (platform GitHub integration may be down)"
 
   publish-skillshubai:
-    needs: load-config
+    needs: [load-config, preflight]
     name: skills-hub.ai
     runs-on: ubuntu-latest
     if: ${{ github.event.inputs.platforms == '' || github.event.inputs.platforms == 'all' || contains(github.event.inputs.platforms, 'skillshubai') }}
@@ -189,7 +203,7 @@ jobs:
           PY
 
   publish-skillhub:
-    needs: load-config
+    needs: [load-config, preflight]
     name: skillhub.cn
     runs-on: ubuntu-latest
     if: ${{ github.event.inputs.platforms == '' || github.event.inputs.platforms == 'all' || contains(github.event.inputs.platforms, 'skillhub') }}

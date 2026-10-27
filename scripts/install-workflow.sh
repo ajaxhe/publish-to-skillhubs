@@ -34,9 +34,16 @@ fi
 mkdir -p "$(dirname "$TARGET")"
 cp "$TEMPLATE" "$TARGET"
 
+# 连同校验脚本一起装进 .github/skill-preflight/：CI 的 preflight job 直接跑它，
+# 保证线上发布和本地发布用的是同一份策略（.github/ 不会进 skill 包）。
+PREFLIGHT_DIR="$SKILL_DIR/.github/skill-preflight"
+mkdir -p "$PREFLIGHT_DIR"
+cp "$SCRIPT_DIR/policy.py" "$SCRIPT_DIR/preflight.py" "$PREFLIGHT_DIR/"
+
 echo "✅ Installed: $TARGET"
+echo "✅ Installed: $PREFLIGHT_DIR/{policy.py,preflight.py}"
 echo ""
 echo "Next steps:"
 echo "  1. Ensure publish.json exists in skill root"
 echo "  2. bash $SCRIPT_DIR/setup-tokens.sh --repo \$(python3 $SCRIPT_DIR/load-config.py '$SKILL_DIR' | python3 -c \"import sys,json; print(json.load(sys.stdin)['github_repo'])\"))"
-echo "  3. git add .github/workflows/publish-to-skillhubs.yml publish.json && git commit && git push"
+echo "  3. git add .github publish.json && git commit && git push"

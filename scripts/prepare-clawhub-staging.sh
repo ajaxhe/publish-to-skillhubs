@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# prepare-clawhub-staging.sh — 为 ClawHub 创建干净副本（过滤二进制与私有配置）
+# prepare-clawhub-staging.sh — 为 ClawHub 创建干净副本（过滤产物、私有配置、二进制）
+#
+# 实际过滤规则在 scripts/policy.py（与发布前校验 preflight.py 共用同一份策略），
+# 这里只做参数校验与调用，避免两套规则各自漂移。
 #
 # Usage:
 #   bash prepare-clawhub-staging.sh --skill-dir /path/to/skill [--staging-dir /path/to/staging]
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APPLY_META="$SCRIPT_DIR/apply-platform-meta.py"
 
 SKILL_DIR=""
 STAGING_DIR=""
@@ -29,37 +35,9 @@ if [ -z "$STAGING_DIR" ]; then
   STAGING_DIR="$(dirname "$SKILL_DIR")/${SKILL_NAME}-clawhub"
 fi
 
-if [ -d "$STAGING_DIR" ]; then
-  rm -rf "$STAGING_DIR"
-fi
-
-mkdir -p "$STAGING_DIR"
-
-rsync -a \
-  --exclude='.git/' \
-  --exclude='.gitignore' \
-  --exclude='out/' \
-  --exclude='config.json' \
-  --exclude='config.json.example' \
-  --exclude='publish.json' \
-  --exclude='__pycache__/' \
-  --exclude='*.pyc' \
-  --exclude='*.png' \
-  --exclude='*.jpg' \
-  --exclude='*.jpeg' \
-  --exclude='*.gif' \
-  --exclude='*.webp' \
-  --exclude='*.pdf' \
-  --exclude='*.zip' \
-  --exclude='*.tar.gz' \
-  --exclude='articles/' \
-  --exclude='.workbuddy/' \
-  --exclude='.github/workflows/publish-to-skillhubs.yml' \
-  --exclude='scripts/publish-to-skillhubs.sh' \
-  --exclude='scripts/setup-tokens.sh' \
-  "$SKILL_DIR/" "$STAGING_DIR/"
+python3 "$APPLY_META" --skill-dir "$SKILL_DIR" --out-dir "$STAGING_DIR" --meta '{}'
 
 echo "✅ ClawHub staging ready: $STAGING_DIR"
 echo "   Publish with:"
-echo "   bash ~/.agents/skills/publish-to-skillhubs/scripts/publish-to-skillhubs.sh \\"
+echo "   bash $SCRIPT_DIR/publish-to-skillhubs.sh \\"
 echo "     --skill-dir '$STAGING_DIR' --platform clawhub"

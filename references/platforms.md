@@ -1,5 +1,39 @@
 # Agent Skill 发布平台参考
 
+## 发布前严格校验（所有平台共用，先于任何上传）
+
+- **入口**: `scripts/preflight.py <skill-dir> [--json] [--skip-content] [--max-mb 8]`
+- **退出码**: `0` 通过（可能有提示）/ `1` 存在阻断项 → 主脚本立即中止，**不向任何平台发送内容**
+- **单一口径**: 校验与打包过滤共用 `scripts/policy.py`，校验的文件集合 == 上传的文件集合；
+  不会出现「校验放行、打包却带上 `.env`」
+
+阻断项：
+
+| code | 触发 |
+|------|------|
+| `no-skill-md` / `missing-name` / `missing-description` | frontmatter 必备字段缺失 |
+| `private-secret` | 工作目录私有配置（`config.json`/`.env*`）**含真实凭证** |
+| `secret` | 待上传文本命中 `skh_`/`clh_`/`skhub_pa`/`sh_`/`ghp_`/`xox`/`AKIA`/`AKID`/私钥/`Bearer` |
+| `total-size` | 整包 > 8 MB |
+| `file-size` | 单文件 > 1 MB |
+
+提示项（`--preflight-strict` 可升级为阻断）：`private-file-present`、`local-path`
+（`/Users/xxx`、`/home/xxx`）、`referenced-but-excluded`（`SKILL.md` 引用了不进包的文件）、`non-utf8`。
+
+排除策略（`policy.py`，唯一事实来源）：
+
+- `ARTIFACT_DIRS`：`.git` `.github` `.idea` `.vscode` `.workbuddy` `__pycache__` `.pytest_cache`
+  `.mypy_cache` `.ruff_cache` `.cache` `node_modules` `.venv` `venv` `env` `dist` `build`
+  `coverage` `htmlcov` `articles` `output` `out` `projects` `logs` `tmp` `.tmp`
+- `PRIVATE_NAMES`：`config.json` `credentials.json` `credential.json` `secrets.json` `secret.json`
+  `auth.json` `token.json` `tokens.json` `.env*` `id_rsa` `id_ed25519` `.netrc` `.npmrc` `.pypirc`
+- `JUNK_NAMES`：`Thumbs.db` `.DS_Store` `publish.json` `.gitignore`；`JUNK_SUFFIXES`：`.pyc/.pyo/.log/.tmp/.bak/.swp/~/.orig/.rej`
+- 无扩展名文件一律跳过（`SKILL.md`/`README`/`README.zh.md`/`Makefile`/`Dockerfile` 例外）
+- 只保留文本类型（`ALLOWED_SUFFIXES`），二进制/图片/PDF 不进包
+
+> 历史坑：`fetch-archive-to-lexiang` 的 `articles/` 有 626 个文件 / 555 MB 抓取产物，
+> 早期只靠 CLI 默认排除会被一起上传。现在由 `policy.py` 统一挡掉。
+
 ## clawhub.ai
 
 - **CLI**: `npm install -g @clawhub/cli`

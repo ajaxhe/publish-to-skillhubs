@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-"""把平台专属元数据（中文 displayName / summary / description / tags 等）写进一份暂存副本。
+"""按发布策略生成 skill 的暂存副本，并按需改写平台专属元数据。
 
-动机：skillhub.cn 只从 SKILL.md frontmatter 读取元数据，且它是面向中文用户的商店，
-需要中文名称与重写过的检索型描述；而 skill 自身的 SKILL.md 描述是给本地 Agent
-做触发匹配的，两者目标不同。直接改原文件会伤到本地触发词，所以这里产出干净副本。
+动机：
+- skill 工作目录里有大量**本地生成的产物**（抓取结果、导出目录、构建缓存）和**私有配置**，
+  绝不能进发布包（实测某 skill 工作目录 555MB）；
+- skillhub.cn 只从 SKILL.md frontmatter 读元数据，且面向中文用户需要重写名称/简介/描述，
+  而原 SKILL.md 的 description 是给本地 Agent 做触发匹配的，两者目标不同。
+
+文件筛选规则来自 `policy.py`（与发布前校验共用同一份策略）。
 
 用法：
     apply-platform-meta.py --skill-dir <原目录> --out-dir <暂存目录> \
-        --meta '{"displayName":"...","summary":"...","tags":["a","b"]}'
+        [--meta '{"displayName":"...","summary":"...","tags":["a","b"]}']
 
 约定：
 - 只改 frontmatter 里出现的键，其余行原样保留；新键追加到 frontmatter 末尾
 - 值一律压成单行（skillhub CLI 的 frontmatter 解析器只认 `key: value` 单行）
 - list 值写成行内列表 `[a, b]`（skillhub CLI 只认这种写法）
-- 暂存副本排除 .git / __pycache__ / *.pyc / .DS_Store / node_modules 等
 """
 
 from __future__ import annotations
@@ -24,68 +27,8 @@ import shutil
 import sys
 from pathlib import Path
 
-EXCLUDE_DIRS = {
-    ".git", ".github", ".idea", ".vscode", "node_modules", "__pycache__", ".workbuddy",
-    # 运行时产物 / 样例数据：体积大且属于使用者本地状态，不该进 skill 包
-    "articles", "output", "out", "projects", "dist", "build",
-    ".venv", "venv", ".pytest_cache", ".mypy_cache", "coverage", ".cache",
-}
-EXCLUDE_SUFFIXES = (".pyc", ".DS_Store")
-EXCLUDE_FILES = {"Thumbs.db", ".DS_Store", "publish.json", ".gitignore", "config.json"}
-# skillhub.cn 服务端按文件类型校验，无扩展名文件（LICENSE 等）会被拒：
-# "不允许的文件类型: LICENSE"。许可证已在 frontmatter 的 license 字段声明，副本里无需带。
-KEEP_EXTENSIONLESS = {"SKILL.md", "README.md", "README.zh.md"}
-# 只带"能读懂 + 能跑"的文本类型，二进制素材（图片/PDF/压缩包）不带：
-# 平台本就不收无扩展名与未知类型，图片又会把包撑大（样例库常有几百 MB）
-ALLOWED_SUFFIXES = (
-    ".md", ".markdown", ".txt", ".py", ".sh", ".bash", ".zsh",
-    ".json", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".conf",
-    ".html", ".htm", ".css", ".js", ".mjs", ".ts", ".csv", ".srt",
-    ".example", ".template", ".tmpl",
-)
-
-
-def _skip_file(name: str) -> bool:
-    if name in EXCLUDE_FILES or name.endswith(EXCLUDE_SUFFIXES):
-        return True
-    if name in KEEP_EXTENSIONLESS:
-        return False
-    # 无扩展名（含 . 开头的隐藏文件）一律跳过
-    if "." not in name.lstrip("."):
-        return True
-    return not name.lower().endswith(ALLOWED_SUFFIXES)
-
-
-def copy_tree(src: Path, dst: Path) -> list[str]:
-    """拷贝目录，返回被跳过的相对路径（供日志展示）。"""
-    skipped: list[str] = []
-
-    def ignore(directory: str, names: list[str]) -> set[str]:
-        dropped: set[str] = set()
-        for name in names:
-            path = Path(directory) / name
-            if path.is_dir():
-                if name in EXCLUDE_DIRS:
-                    dropped.add(name)
-                continue
-            if _skip_file(name):
-                dropped.add(name)
-                skipped.append(str(path.relative_to(src)))
-        return dropped
-
-    if dst.exists():
-        shutil.rmtree(dst)
-    dst.mkdir(parents=True, exist_ok=True)
-    for item in src.iterdir():
-        if item.name in EXCLUDE_DIRS or item.name in EXCLUDE_FILES:
-            continue
-        if item.is_dir():
-            shutil.copytree(item, dst / item.name, ignore=ignore, symlinks=False)
-        elif not _skip_file(item.name):
-            shutil.copy2(item, dst / item.name)
-        else:
-            skipped.append(item.name)
-    return skipped
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import policy  # noqa: E402
 
 
 def format_value(value: object) -> str:
@@ -126,11 +69,24 @@ def rewrite_frontmatter(skill_md: Path, meta: dict) -> list[str]:
     return applied
 
 
+def build_staging(src: Path, dst: Path) -> dict[str, list[str]]:
+    """按 policy 过滤拷到 dst，返回 {跳过原因: [相对路径]}。"""
+    files, skipped = policy.collect_publish_files(src)
+    if dst.exists():
+        shutil.rmtree(dst)
+    dst.mkdir(parents=True, exist_ok=True)
+    for path in files:
+        target = dst / path.relative_to(src)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+    return skipped
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--skill-dir", required=True)
     parser.add_argument("--out-dir", required=True)
-    parser.add_argument("--meta", default="{}", help="JSON 字符串或 .json 文件路径（为空则只做文件过滤拷贝）")
+    parser.add_argument("--meta", default="{}", help="JSON 字符串或 .json 文件路径（为空则只做过滤拷贝）")
     args = parser.parse_args()
 
     raw = args.meta.strip()
@@ -150,7 +106,7 @@ def main() -> int:
     if not (src / "SKILL.md").is_file():
         raise SystemExit(f"源目录没有 SKILL.md: {src}")
 
-    skipped = copy_tree(src, dst)
+    skipped = build_staging(src, dst)
     applied = rewrite_frontmatter(dst / "SKILL.md", meta) if meta else []
     kept = [p for p in dst.rglob("*") if p.is_file()]
     total = sum(p.stat().st_size for p in kept)
@@ -159,9 +115,8 @@ def main() -> int:
         print("已覆盖 frontmatter 字段: " + ", ".join(applied))
     print(f"包内容: {len(kept)} 个文件 / {total / 1024 / 1024:.2f} MB")
     if skipped:
-        preview = sorted(set(skipped))
-        shown = ", ".join(preview[:6]) + (f" …共 {len(preview)} 项" if len(preview) > 6 else "")
-        print("已跳过（平台不接受 / 非 skill 本体）: " + shown)
+        parts = [f"{reason} ×{len(paths)}" for reason, paths in sorted(skipped.items())]
+        print("已跳过（非 skill 本体）: " + "；".join(parts))
     return 0
 
 

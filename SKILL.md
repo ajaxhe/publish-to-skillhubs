@@ -2,9 +2,9 @@
 name: publish-to-skillhubs
 slug: publish-to-skillhubs
 displayName: Publish to Skill Hubs
-summary: 把本地 Agent Skill 一键分发到 ClawHub、agentskillhub.dev、skills-hub.ai、skillhub.cn、agent-skills-hub，支持 publish.json 配置、ClawHub 干净副本与 GitHub Actions CI
-description: 将任意 Agent Skill 一键发布到 ClawHub、agentskillhub.dev、skills-hub.ai、skillhub.cn、agent-skills-hub 等平台。支持 publish.json 配置、ClawHub 干净副本、GitHub Actions CI。当用户提到「发布 skill」「提交到 ClawHub/SkillHub/skillhub.cn」「扩大 skill 影响力」「publish to skill platforms」时使用。
-version: 1.1.0
+summary: 把本地 Agent Skill 一键分发到 ClawHub、agentskillhub.dev、skills-hub.ai、skillhub.cn、agent-skills-hub，内置发布前严格校验（剔除本地产物/私有配置/凭证），支持 publish.json 配置、干净副本与 GitHub Actions CI
+description: 将任意 Agent Skill 一键发布到 ClawHub、agentskillhub.dev、skills-hub.ai、skillhub.cn、agent-skills-hub 等平台。发布前自动做严格校验：剔除本地生成的产物、私有配置与凭证，命中即阻断，避免脏包上架。支持 publish.json 配置、干净副本、GitHub Actions CI。当用户提到「发布 skill」「提交到 ClawHub/SkillHub/skillhub.cn」「扩大 skill 影响力」「publish to skill platforms」「发布前检查 skill 包」时使用。
+version: 1.2.0
 author: ajaxhe
 category: productivity
 tags: [publish, clawhub, skillhub, automation, ci]
@@ -41,6 +41,39 @@ python3 $CRED set skillhub token skh_xxx    # 写入/轮换单个字段
 
 字段命名：`clawhub.token/registry`、`agentskillhub.token`、`skillshubai.apiKey/apiUrl`、
 `skillhub.token/host`。**该文件不要提交到任何仓库。**
+
+## 发布前严格校验（自动执行，阻断式）
+
+`publish-to-skillhubs.sh` 在**向任何平台发送内容之前**会先跑 `scripts/preflight.py`，
+校验规则与打包过滤共用 `scripts/policy.py` —— **校验的那些文件，就是要上传的那些文件**，
+不存在「校验放行、打包却带上 `.env`」的错位。
+
+```bash
+python3 scripts/preflight.py /path/to/skill          # 人读报告
+python3 scripts/preflight.py /path/to/skill --json   # 机读，退出码 0/1
+```
+
+阻断项（`exit 1`，发布直接中止）：
+
+| 检查 | 说明 |
+|------|------|
+| `no-skill-md` / `missing-name` / `missing-description` | frontmatter 必备字段缺失 |
+| `private-secret` | 工作目录里的私有配置（`config.json`/`.env`…）**含真实凭证** |
+| `secret` | 待上传的文本里命中 `skh_`/`ghp_`/`AKIA`/私钥/Bearer 等特征 |
+| `total-size` / `file-size` | 整包 > 8 MB 或单文件 > 1 MB |
+
+提示项（不阻断，加 `--preflight-strict` 可升级为阻断）：
+
+- `private-file-present`：目录里有私有配置（不进包，但提醒别提交仓库）
+- `local-path`：文本含 `/Users/xxx`、`/home/xxx` 等本地绝对路径
+- `referenced-but-excluded`：`SKILL.md` 引用了不会进包的文件（装完跑不起来）
+- `non-utf8`：非 UTF-8 文本待确认
+
+**永远不进包**（`policy.ARTIFACT_DIRS` / `PRIVATE_NAMES`）：
+`.git` `.github` `.workbuddy` `__pycache__` `node_modules` `.venv` `dist` `build`
+`articles` `output` `out` `projects` `logs` `tmp` 等产物目录；
+`config.json` `credentials.json` `auth.json` `token.json` `.env*` `id_rsa` 等私有文件；
+`publish.json` `.gitignore` `.DS_Store` 等无需发布项；二进制与非文本类型。
 
 ## 快速开始
 
@@ -116,6 +149,11 @@ bash ~/.agents/skills/publish-to-skillhubs/scripts/setup-tokens.sh \
   --repo owner/repo
 ```
 
+`install-workflow.sh` 会同时把 `policy.py` + `preflight.py` 装到
+`<skill>/.github/skill-preflight/`，CI 里有一个独立的 `preflight` job 跑同一份校验，
+所有 publish job 都 `needs: [load-config, preflight]` —— 本地与线上同一道闸门。
+`.github/` 本身在排除名单里，不会进 skill 包。
+
 ## Agent 执行流程
 
 当用户要求「把某 skill 发布到各平台」时，按序执行：
@@ -126,7 +164,13 @@ bash ~/.agents/skills/publish-to-skillhubs/scripts/setup-tokens.sh \
 - 确认存在 `SKILL.md`
 - 若无 `publish.json`，从 `SKILL.md` frontmatter + `git remote` 自动生成并让用户确认
 
-### Step 1：发布前检查
+### Step 1：发布前校验（必跑）
+
+```bash
+python3 ~/.workbuddy/skills/publish-to-skillhubs/scripts/preflight.py /path/to/skill
+```
+
+退出码非 0 就**停下来修**，不要 `--skip-preflight` 硬发。同时人工确认 checklist：
 
 - [ ] `SKILL.md` frontmatter 含 `name`、`description`（≤200 字兼容 Claude.ai）
 - [ ] 建议含 `version`、`tags`、`category`（skills-hub.ai 需要 category）
@@ -183,7 +227,7 @@ skillhub.cn 走官方 CLI（`skillhub publish <dir>`），没有 OAuth 兜底：
 
 ```bash
 ln -sf ~/.workbuddy/skills/sync-obsidian-to-lexiang \
-  /Users/ajaxhe/CodeBuddy/贾维斯/.codebuddy/skills/sync-obsidian-to-lexiang
+  ~/CodeBuddy/贾维斯/.codebuddy/skills/sync-obsidian-to-lexiang
 ```
 
 发布时 `--skill-dir` 指向软链或真实路径均可；脚本会自动 resolve。
@@ -192,13 +236,15 @@ ln -sf ~/.workbuddy/skills/sync-obsidian-to-lexiang \
 
 | 脚本 | 用途 |
 |------|------|
-| `scripts/publish-to-skillhubs.sh` | 主发布脚本 |
+| `scripts/publish-to-skillhubs.sh` | 主发布脚本（含 Step 1 强制校验） |
+| `scripts/preflight.py` | 发布前严格校验，阻断式，退出码 0/1 |
+| `scripts/policy.py` | **策略单一事实来源**：打包过滤 + 校验规则共用 |
 | `scripts/setup-tokens.sh` | 一次性：提取各平台 token → GitHub Secrets |
-| `scripts/prepare-clawhub-staging.sh` | 创建 ClawHub 干净副本 |
-| `scripts/install-workflow.sh` | 复制 CI workflow 到目标 skill 仓库 |
+| `scripts/prepare-clawhub-staging.sh` | 创建 ClawHub 干净副本（走 policy 过滤） |
+| `scripts/install-workflow.sh` | 复制 CI workflow + 校验脚本到目标 skill 仓库 |
 | `scripts/load-config.py` | 读取 publish.json + 自动推断 |
 | `scripts/load-credentials.py` | 统一凭证的读写/汇总/掩码查看 |
-| `scripts/apply-platform-meta.py` | 生成暂存副本：改写 frontmatter 元数据 + 过滤平台不接受的文件 |
+| `scripts/apply-platform-meta.py` | 生成暂存副本：改写 frontmatter 元数据 + 按 policy 过滤文件 |
 
 ## 参考
 
