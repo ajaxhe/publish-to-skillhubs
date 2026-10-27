@@ -161,7 +161,13 @@ try:
     token = next((item.get("token") for item in credentials if item.get("token")), "")
 except (FileNotFoundError, json.JSONDecodeError):
     pass
-headers = {"Content-Type": "application/json"}
+headers = {
+    "Content-Type": "application/json",
+    # Cloudflare 前置拦截非浏览器 UA（返回 403 "error code: 1010"），必须伪装 UA
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+    "Accept": "application/json",
+}
 if token:
     headers["Authorization"] = f"Bearer {token}"
 
@@ -276,9 +282,15 @@ def api(method, path, data=None):
     )
     try:
         with urllib.request.urlopen(req) as resp:
-            return resp.status, json.loads(resp.read())
+            raw = resp.read()
+            return resp.status, (json.loads(raw) if raw else {})
     except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read())
+        raw = e.read()
+        try:
+            body = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            body = {"error": raw.decode(errors="replace")[:500]}
+        return e.code, body
 
 code, data = api("GET", f"/{slug}")
 if code == 404:
