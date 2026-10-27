@@ -12,13 +12,16 @@
 | code | 触发 |
 |------|------|
 | `no-skill-md` / `missing-name` / `missing-description` | frontmatter 必备字段缺失 |
+| `frontmatter-colon` | 值的 plain scalar 里有半角冒号+空格 `: `（或值以冒号结尾） |
+| `frontmatter-no-colon` | frontmatter 某行不是 `key: value` 结构 |
 | `private-secret` | 工作目录私有配置（`config.json`/`.env*`）**含真实凭证** |
 | `secret` | 待上传文本命中 `skh_`/`clh_`/`skhub_pa`/`sh_`/`ghp_`/`xox`/`AKIA`/`AKID`/私钥/`Bearer` |
 | `total-size` | 整包 > 8 MB |
 | `file-size` | 单文件 > 1 MB |
 
 提示项（`--preflight-strict` 可升级为阻断）：`private-file-present`、`local-path`
-（`/Users/xxx`、`/home/xxx`）、`referenced-but-excluded`（`SKILL.md` 引用了不进包的文件）、`non-utf8`。
+（`/Users/xxx`、`/home/xxx`）、`referenced-but-excluded`（`SKILL.md` 引用了不进包的文件）、`non-utf8`、
+`frontmatter-dup-key`、`frontmatter-comment`。
 
 排除策略（`policy.py`，唯一事实来源）：
 
@@ -160,4 +163,16 @@ categories 200、`/skills` 503、几十秒后全部恢复。遇到 503 先分辨
 - skills-hub.ai：`GET /api/v1/skills/<slug>` 的 `status` 为 `PENDING_REVIEW`，质量分 `qualityScore` 已有值。
 - agentskillhub.dev：import 返回 `imported: 1` 即已公开，页面可正常渲染（根目录 skill 的 `path` 是空字符串）。
 汇报用「已上传/待审核」而不是笼统的「已发布」。
+
+**5. `frontmatter` 里半角冒号+空格 → 平台直接拒收（2026-10-27，product-demo-video-maker 实测）**
+报错 `frontmatter YAML 解析失败: yaml: line 5: mapping values are not allowed in this context`。
+根因是 `description` 值里写了一小段英文 `Also: product demo video editor for agents` ——
+plain scalar 内部的 `: ` 被 YAML 当成新的 mapping 起点。三个细节值得记住：
+
+- **中文全角冒号「：」不触发**，只有半角 `: ` 会。所以中文长描述里混一句英文带冒号最容易中招。
+- **行号要 +1**：平台拿到的是去掉首个 `---` 的 frontmatter，`name` 记作第 1 行；
+  本地文件里第 6 行的 `description`，平台报的是 line 5。差一行很容易找错地方。
+- **复现/验证别靠猜**：`ruby -ryaml -e 'YAML.load_file(...)'`（macOS 自带）能一比一复现同类报错；
+  修完也要用它确认真能解析。`preflight.py` 已内置纯文本版检查（`frontmatter-colon`），
+  输出的是**平台行号**，不用再自己换算。
 

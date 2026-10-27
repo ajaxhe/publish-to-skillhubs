@@ -62,6 +62,13 @@ def read_frontmatter(skill_md: Path) -> dict[str, str]:
     return fm
 
 
+def read_frontmatter_text(skill_md: Path) -> str:
+    """取 frontmatter 原文（两个 `---` 之间的全部行），给 YAML 合规检查用。"""
+    text = skill_md.read_text(encoding="utf-8", errors="replace")
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n", text, re.DOTALL)
+    return match.group(1) if match else ""
+
+
 def check(root: Path, max_mb: float, skip_content: bool) -> dict:
     findings: list[dict] = []
     root = root.resolve()
@@ -78,6 +85,10 @@ def check(root: Path, max_mb: float, skip_content: bool) -> dict:
                     "level": BLOCK, "code": f"missing-{field}",
                     "message": f"SKILL.md frontmatter 缺少 {field}",
                 })
+        # 平台解析器会因为 YAML 写法直接拒收（典型：值里有半角冒号+空格）
+        for item in policy.scan_frontmatter(read_frontmatter_text(skill_md)):
+            item["level"] = BLOCK if item["level"] == "block" else WARN
+            findings.append(item)
 
     files, skipped = policy.collect_publish_files(root)
     total = sum(f.stat().st_size for f in files)

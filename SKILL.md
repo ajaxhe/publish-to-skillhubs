@@ -58,6 +58,8 @@ python3 scripts/preflight.py /path/to/skill --json   # 机读，退出码 0/1
 | 检查 | 说明 |
 |------|------|
 | `no-skill-md` / `missing-name` / `missing-description` | frontmatter 必备字段缺失 |
+| `frontmatter-colon` | **值的 plain scalar 里有半角冒号+空格 `: `** → 平台报 `mapping values are not allowed in this context` |
+| `frontmatter-no-colon` | frontmatter 某行不是 `key: value` 结构 |
 | `private-secret` | 工作目录里的私有配置（`config.json`/`.env`…）**含真实凭证** |
 | `secret` | 待上传的文本里命中 `skh_`/`ghp_`/`AKIA`/私钥/Bearer 等特征 |
 | `total-size` / `file-size` | 整包 > 8 MB 或单文件 > 1 MB |
@@ -68,6 +70,26 @@ python3 scripts/preflight.py /path/to/skill --json   # 机读，退出码 0/1
 - `local-path`：文本含 `/Users/xxx`、`/home/xxx` 等本地绝对路径
 - `referenced-but-excluded`：`SKILL.md` 引用了不会进包的文件（装完跑不起来）
 - `non-utf8`：非 UTF-8 文本待确认
+- `frontmatter-dup-key` / `frontmatter-comment`：重复键；值里的 ` #` 会被 YAML 当注释截断
+
+### frontmatter YAML 这条坑值得单独说
+
+`description` 这类长值如果不加引号（plain scalar），**值内部不能出现半角冒号+空格**：
+
+```yaml
+# ❌ 平台报：yaml: line 5: mapping values are not allowed in this context
+description: ...product demo video。Also: product demo video editor for agents.
+# ❌ 同样炸：值以冒号结尾
+summary: 能力包括:
+# ✅ 换成中文全角冒号 / 改标点 / 整体加引号
+description: ...product demo video。Also, product demo video editor for agents.
+description: "...product demo video。Also: product demo video editor for agents."
+description: >-
+  多行长描述用块标量，内部随便写冒号
+```
+
+行号提示：平台报的行号是**去掉首个 `---` 之后**的位置（`name` 记作第 1 行），
+所以在本地文件里要 **+1** 才对应得上。`preflight.py` 输出的就是平台行号。
 
 **永远不进包**（`policy.ARTIFACT_DIRS` / `PRIVATE_NAMES`）：
 `.git` `.github` `.workbuddy` `__pycache__` `node_modules` `.venv` `dist` `build`

@@ -155,3 +155,87 @@ def scan_local_paths(text: str) -> list[str]:
             hits.append(label)
             break
     return hits
+
+
+# ── frontmatter YAML 合规（平台解析器会直接报错的那一类问题） ────────────────
+# 值的首个字符是这些时属于合法写法，不需要按 plain scalar 检查
+_BLOCK_OR_QUOTED = ('"', "'", "[", "{", "|", ">")
+
+
+def scan_frontmatter(frontmatter: str) -> list[dict]:
+    """检查 frontmatter 里会让 YAML 解析器报错的写法（纯文本规则，不依赖 PyYAML）。
+
+    最常见的一条：plain scalar（不加引号的值）内部出现 **ASCII 冒号 + 空格**，
+    解析器会把它当成「新的 mapping 开始」，报
+    `mapping values are not allowed in this context`。
+    中文全角冒号「：」不触发，所以只查半角。
+
+    行号按**平台视角**给：`name` 记作第 1 行（平台拿到时已去掉首个 `---`），
+    方便和平台报错里的行号直接对照。
+    """
+    findings: list[dict] = []
+    seen_keys: dict[str, int] = {}
+    in_block = False
+    block_indent = 0
+
+    for idx, line in enumerate(frontmatter.splitlines(), start=1):
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        # 块标量（`|` / `>`）的正文行：缩进即内容，不参与键值检查
+        if in_block:
+            if line.lstrip().startswith("#") or indent > block_indent:
+                continue
+            in_block = False
+        if line.lstrip().startswith("#") or indent > 0:
+            continue
+
+        key, sep, value = line.partition(":")
+        if not sep:
+            findings.append({
+                "level": "block", "code": "frontmatter-no-colon",
+                "message": f"frontmatter 第 {idx} 行不是 `key: value` 结构：{line[:60]}",
+            })
+            continue
+
+        key = key.strip()
+        value = value.strip()
+        if key in seen_keys:
+            findings.append({
+                "level": "warn", "code": "frontmatter-dup-key",
+                "message": f"frontmatter 重复键 `{key}`（第 {seen_keys[key]} 行与第 {idx} 行，后者覆盖前者）",
+            })
+        seen_keys.setdefault(key, idx)
+
+        if not value:
+            continue
+        if value[0] in _BLOCK_OR_QUOTED:
+            if value[0] in "|>":
+                in_block = True
+                block_indent = indent
+            continue
+
+        # plain scalar：查半角冒号+空格（含行尾冒号）
+        for match in re.finditer(r":\s", value):
+            snippet = value[max(0, match.start() - 20): match.start() + 16]
+            findings.append({
+                "level": "block", "code": "frontmatter-colon",
+                "message": (f"frontmatter 第 {idx} 行 `{key}` 的值里有半角冒号+空格 `: `，"
+                            f"YAML 会报 mapping values are not allowed in this context"
+                            f"（…{snippet}…）；改成全角「：」、改标点，或给整行值加引号"),
+            })
+            break
+        else:
+            if value.endswith(":"):
+                findings.append({
+                    "level": "block", "code": "frontmatter-colon",
+                    "message": f"frontmatter 第 {idx} 行 `{key}` 的值以冒号结尾，YAML 会解析失败",
+                })
+        # 空格+# 会被当成注释，值被静默截断
+        if re.search(r"\s#", value):
+            findings.append({
+                "level": "warn", "code": "frontmatter-comment",
+                "message": f"frontmatter 第 {idx} 行 `{key}` 的值里有 ` #`，YAML 会当作注释截断后面的内容",
+            })
+
+    return findings

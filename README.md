@@ -101,6 +101,7 @@ python3 scripts/preflight.py /path/to/your-skill --json   # 机读，exit 0/1
 | 判定 | 触发条件 |
 |------|----------|
 | ❌ 阻断 | 缺 `SKILL.md` / `name` / `description` |
+| ❌ 阻断 | `frontmatter` 值的 plain scalar 里有半角冒号+空格 `: `（平台报 `mapping values are not allowed in this context`） |
 | ❌ 阻断 | 私有配置（`config.json`/`.env`）**含真实凭证** |
 | ❌ 阻断 | 待上传文本命中 `skh_`、`ghp_`、`AKIA`、`AKID`、私钥、`Bearer` 等特征 |
 | ❌ 阻断 | 整包 > 8 MB 或单文件 > 1 MB |
