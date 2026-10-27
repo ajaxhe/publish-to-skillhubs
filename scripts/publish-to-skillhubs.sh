@@ -14,7 +14,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOAD_CONFIG="$SCRIPT_DIR/load-config.py"
+LOAD_CREDENTIALS="$SCRIPT_DIR/load-credentials.py"
 PREPARE_CLAWHUB="$SCRIPT_DIR/prepare-clawhub-staging.sh"
+APPLY_META="$SCRIPT_DIR/apply-platform-meta.py"
+
+# 统一凭证：~/.config/publish-to-skillhubs/credentials.json（PUBLISH_CREDENTIALS 可覆盖）。
+# 各平台原生配置文件仅作兜底，见 load-credentials.py。
+cred() { python3 "$LOAD_CREDENTIALS" get "$1" "$2" 2>/dev/null || true; }
 
 SKILL_DIR=""
 DRY_RUN=false
@@ -150,18 +156,23 @@ publish_agentskillhub() {
     return
   fi
 
+  # 优先统一凭证；拿不到再退回 ~/.skhub/auth.json
+  AGENTSKILLHUB_TOKEN="$(cred agentskillhub token)"
+  export AGENTSKILLHUB_TOKEN
+
   # Always analyze first. AgentSkillHub represents a root-level SKILL.md as
   # path "", not "."; guessing the path makes otherwise valid repositories fail.
   python3 - "$GITHUB_REPO" "$GITHUB_REPO_URL" "$SKILL_NAME" "$SKHUB_AUTH" <<'PY'
-import json, sys, urllib.error, urllib.request
+import json, os, sys, urllib.error, urllib.request
 
 repo, repo_url, skill_name, auth_path = sys.argv[1:5]
-token = ""
-try:
-    credentials = json.load(open(auth_path)).get("credentials", {}).values()
-    token = next((item.get("token") for item in credentials if item.get("token")), "")
-except (FileNotFoundError, json.JSONDecodeError):
-    pass
+token = (os.environ.get("AGENTSKILLHUB_TOKEN") or "").strip()
+if not token:
+    try:
+        credentials = json.load(open(auth_path)).get("credentials", {}).values()
+        token = next((item.get("token") for item in credentials if item.get("token")), "")
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
 headers = {
     "Content-Type": "application/json",
     # Cloudflare 前置拦截非浏览器 UA（返回 403 "error code: 1010"），必须伪装 UA
@@ -226,21 +237,33 @@ publish_skillshubai() {
   fi
 
   SKILLSHUB_CONFIG="$HOME/.skills-hub/config.json"
-  if [ ! -f "$SKILLSHUB_CONFIG" ]; then
-    log_warn "未找到 ~/.skills-hub/config.json"
+  SKILLSHUBAI_KEY="$(cred skillshubai apiKey)"
+  SKILLSHUBAI_URL="$(cred skillshubai apiUrl)"
+  if [ -z "$SKILLSHUBAI_KEY" ] && [ ! -f "$SKILLSHUB_CONFIG" ]; then
+    log_warn "未找到 skills-hub 凭证（统一凭证与 ~/.skills-hub/config.json 均无）"
     echo "  → https://skills-hub.ai/settings/api-keys 创建 API Key"
+    echo "  → python3 $LOAD_CREDENTIALS set skillshubai apiKey <key>"
     return
   fi
 
   if [ "$DRY_RUN" = true ]; then
-    echo "[DRY RUN] POST https://api.skills-hub.ai/api/v1/skills (REST API)"
+    echo "[DRY RUN] POST ${SKILLSHUBAI_URL:-https://api.skills-hub.ai}/api/v1/skills (REST API)"
     return
   fi
 
+  export SKILLSHUBAI_KEY SKILLSHUBAI_URL
   if ! python3 - "$SKILL_DIR" "$GITHUB_REPO_URL" "$SKILLSHUB_CONFIG" <<'PY'
-import json, re, sys, urllib.request, urllib.error
+import json, os, re, sys, urllib.request, urllib.error
 skill_dir, repo_url, cfg_path = sys.argv[1:4]
-token = json.load(open(cfg_path)).get("apiKey") or ""
+token = (os.environ.get("SKILLSHUBAI_KEY") or "").strip()
+api_base = (os.environ.get("SKILLSHUBAI_URL") or "").strip()
+if not token:
+    try:
+        token = json.load(open(cfg_path)).get("apiKey") or ""
+    except (FileNotFoundError, json.JSONDecodeError):
+        token = ""
+if not api_base:
+    api_base = "https://api.skills-hub.ai"
 if not token:
     print("❌ skills-hub API key 为空"); sys.exit(1)
 
@@ -276,7 +299,7 @@ payload = {
 
 def api(method, path, data=None):
     req = urllib.request.Request(
-        f"https://api.skills-hub.ai/api/v1/skills{path}",
+        f"{api_base.rstrip('/')}/api/v1/skills{path}",
         data=json.dumps(data).encode() if data is not None else None,
         headers={"Content-Type": "application/json", "Authorization": f"ApiKey {token}", "User-Agent": "Mozilla/5.0"},
         method=method,
@@ -334,6 +357,18 @@ publish_clawhub() {
   if [ "$DRY_RUN" = true ]; then
     echo "[DRY RUN] clawhub --workdir $(dirname "${SKILL_DIR}") publish ${SKILL_NAME} --version ${SKILL_VERSION}"
     return
+  fi
+
+  # 统一凭证优先：clawhub 支持 CLAWHUB_CONFIG_PATH，指向临时生成的配置即可，不动用户原生配置
+  CLAWHUB_TOKEN_CRED="$(cred clawhub token)"
+  CLAWHUB_REGISTRY_CRED="$(cred clawhub registry)"
+  CLAWHUB_RUNTIME_CFG=""
+  if [ -n "$CLAWHUB_TOKEN_CRED" ]; then
+    CLAWHUB_RUNTIME_CFG="${TMPDIR:-/tmp}/clawhub-cred-$$.json"
+    printf '{"registry":"%s","token":"%s"}\n' "${CLAWHUB_REGISTRY_CRED:-https://clawhub.ai}" "$CLAWHUB_TOKEN_CRED" > "$CLAWHUB_RUNTIME_CFG"
+    chmod 600 "$CLAWHUB_RUNTIME_CFG"
+    export CLAWHUB_CONFIG_PATH="$CLAWHUB_RUNTIME_CFG"
+    trap 'rm -f "$CLAWHUB_RUNTIME_CFG"' EXIT
   fi
 
   if CLAWHUB_USER=$(clawhub whoami 2>&1); then
@@ -397,38 +432,93 @@ publish_skillhub() {
     return 1
   fi
 
+  # skillhub.cn 一律先做暂存副本，原因有二：
+  #   1) 服务端按文件类型校验，无扩展名文件（LICENSE 等）会被拒："不允许的文件类型: LICENSE"
+  #   2) 它面向中文用户，名称/简介/描述需要用中文并针对检索重写（platform_overrides.skillhub），
+  #      而原 SKILL.md 的 description 是给本地 Agent 做触发匹配的，不能直接改。
+  local TARGET_DIR="$SKILL_DIR"
+  local STAGING_ROOT=""
+  local OVERRIDE_META
+  OVERRIDE_META=$(python3 -c "
+import json, sys
+cfg = json.load(sys.stdin)
+print(json.dumps((cfg.get('platform_overrides') or {}).get('skillhub') or {}, ensure_ascii=False))
+" <<< "$CFG_JSON")
+
   if [ "$DRY_RUN" = true ]; then
-    echo "[DRY RUN] skillhub publish '$SKILL_DIR' --version '$SKILL_VERSION' --changelog '$CHANGELOG_TEXT' --dry-run"
+    if [ -n "$OVERRIDE_META" ] && [ "$OVERRIDE_META" != "{}" ]; then
+      echo "[DRY RUN] 发布前会用 platform_overrides.skillhub 重写 frontmatter："
+      python3 -c "
+import json, sys
+meta = json.loads(sys.argv[1])
+for key, value in meta.items():
+    if isinstance(value, list):
+        value = '[' + ', '.join(map(str, value)) + ']'
+    text = str(value)
+    print(f'    {key}: {text if len(text) <= 90 else text[:90] + \"…\"}')
+" "$OVERRIDE_META"
+    else
+      echo "[DRY RUN] 未配置 platform_overrides.skillhub，将直接沿用 SKILL.md 元数据"
+    fi
+    echo "[DRY RUN] 会生成暂存副本并跳过无扩展名文件（LICENSE 等）后上传"
     return
   fi
 
-  # 元数据预检：SkillHub 强校验 front matter 的 slug / version / displayName。
-  # --dry-run 只校验 metadata、不上传，几秒钟出结果。
-  local precheck
-  if ! precheck=$(skillhub publish "$SKILL_DIR" --version "$SKILL_VERSION" --dry-run 2>&1); then
-    log_error "SkillHub 元数据预检失败：$(printf '%s\n' "$precheck" | grep -v '发现新版本' | tail -1)"
-    echo "  → SKILL.md front matter 必须含：slug（kebab-case，全网唯一）、version（SemVer）、displayName"
-    echo "  → summary / description / license 建议补上；tags 要写成行内列表 tags: [a, b]"
+  STAGING_ROOT="${TMPDIR:-/tmp}/skillhub-staging-$$"
+  TARGET_DIR="$STAGING_ROOT/$(basename "$SKILL_DIR")"
+  if ! python3 "$APPLY_META" --skill-dir "$SKILL_DIR" --out-dir "$TARGET_DIR" --meta "$OVERRIDE_META"; then
+    log_error "生成 SkillHub 暂存副本失败"
+    rm -rf "$STAGING_ROOT"
     return 1
   fi
 
-  # skh_ token 只能来自 --token / SKILLHUB_TOKEN / ~/.skillhub/credentials.json，
-  # 没有浏览器 OAuth 兜底；非交互模式不引导登录，直接给准确下一步。
-  if ! skillhub auth whoami >/dev/null 2>&1; then
+  # 元数据预检：SkillHub 强校验 front matter 的 slug / version / displayName。
+  # --dry-run 只校验 metadata、不上传，几秒钟出结果（对暂存副本跑，校验的是真正要发的元数据）。
+  local precheck
+  if ! precheck=$(skillhub publish "$TARGET_DIR" --version "$SKILL_VERSION" --dry-run 2>&1); then
+    log_error "SkillHub 元数据预检失败：$(printf '%s\n' "$precheck" | grep -v '发现新版本' | tail -1)"
+    echo "  → SKILL.md front matter 必须含：slug（kebab-case，全网唯一）、version（SemVer）、displayName"
+    echo "  → summary / description / license 建议补上；tags 要写成行内列表 tags: [a, b]"
+    [ -n "$STAGING_ROOT" ] && rm -rf "$STAGING_ROOT"
+    return 1
+  fi
+
+  # skh_ token 优先级：统一凭证 > SKILLHUB_TOKEN env > ~/.skillhub/credentials.json
+  # （skillhub CLI 自身也认 --token / SKILLHUB_TOKEN，这里统一从 shell 注入）
+  SKILLHUB_TOKEN_CRED="$(cred skillhub token)"
+  SKILLHUB_HOST_CRED="$(cred skillhub host)"
+  if [ -n "$SKILLHUB_TOKEN_CRED" ]; then
+    export SKILLHUB_TOKEN="$SKILLHUB_TOKEN_CRED"
+  fi
+
+  # 登录态校验：注意 `skillhub auth whoami` 只读 ~/.skillhub/credentials.json，
+  # 不认 SKILLHUB_TOKEN，所以有统一凭证时直接打 auth/me 校验，避免误判未登录。
+  if [ -n "${SKILLHUB_TOKEN:-}" ]; then
+    if curl -sf -m 20 -H "Authorization: Bearer $SKILLHUB_TOKEN" -H 'Accept: application/json' \
+      "${SKILLHUB_HOST_CRED:-https://api.skillhub.cn}/api/v1/auth/me" >/dev/null 2>&1; then
+      log_info "skillhub.cn 凭证有效（来自统一凭证）"
+    else
+      log_error "skillhub.cn token 校验失败：token 失效（401）或账号未完成实名认证（403）"
+      echo "  → https://skillhub.cn/dashboard/keys 重新创建，再 python3 $LOAD_CREDENTIALS set skillhub token skh_xxx"
+      [ -n "$STAGING_ROOT" ] && rm -rf "$STAGING_ROOT"
+      return 1
+    fi
+  elif ! skillhub auth whoami >/dev/null 2>&1; then
     log_warn "未登录 skillhub.cn"
     echo "  → https://skillhub.cn/dashboard/keys 创建 API Token（skh_ 开头，需先完成实名认证）"
-    echo "  → skillhub login --key skh_xxx --host https://api.skillhub.cn"
-    echo "  → 或设置环境变量 SKILLHUB_TOKEN"
+    echo "  → python3 $LOAD_CREDENTIALS set skillhub token skh_xxx   （写入统一凭证）"
+    echo "  → 或 skillhub login --key skh_xxx --host ${SKILLHUB_HOST_CRED:-https://api.skillhub.cn}"
     return 1
   fi
 
   local out status
-  out=$(skillhub publish "$SKILL_DIR" \
+  out=$(skillhub publish "$TARGET_DIR" \
     --version "$SKILL_VERSION" \
     --changelog "$CHANGELOG_TEXT" 2>&1) || status=$?
   printf '%s\n' "$out" | grep -v '发现新版本'
 
   if [ "${status:-0}" -ne 0 ]; then
+    [ -n "$STAGING_ROOT" ] && rm -rf "$STAGING_ROOT"
     # 幂等重跑：同版本重复发布视为成功；slug 被占用（409）不算成功
     if printf '%s' "$out" | grep -qE "版本.*已存在|already exists"; then
       log_info "skillhub.cn 版本 ${SKILL_VERSION} 已存在，无需重复发布"
@@ -438,6 +528,7 @@ publish_skillhub() {
     return 1
   fi
 
+  [ -n "$STAGING_ROOT" ] && rm -rf "$STAGING_ROOT"
   local pub_url
   pub_url=$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*url:[[:space:]]*//p' | head -1)
   if printf '%s' "$out" | grep -q "pending_review"; then

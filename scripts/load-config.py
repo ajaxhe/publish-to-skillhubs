@@ -83,6 +83,9 @@ def load_config(skill_dir: Path) -> dict:
     changelog = cfg.get("changelog") or "See README.md"
     clawscan_note = cfg.get("clawscan_note", "")
     clawhub_owner = cfg.get("clawhub_owner") or (github_repo.split("/", 1)[0] if "/" in github_repo else "")
+    platform_overrides = cfg.get("platform_overrides", {})
+    if not isinstance(platform_overrides, dict):
+        platform_overrides = {}
     pr_description = cfg.get("pr_description", f"Add {skill_name} skill.\n\nSource: https://github.com/{github_repo}")
     platforms = cfg.get(
         "platforms",
@@ -105,6 +108,7 @@ def load_config(skill_dir: Path) -> dict:
         "github_repo_url": f"https://github.com/{github_repo}" if github_repo else "",
         "changelog": changelog,
         "clawscan_note": clawscan_note,
+        "platform_overrides": platform_overrides,
         "clawhub_owner": clawhub_owner,
         "pr_description": pr_description,
         "platforms": platforms,

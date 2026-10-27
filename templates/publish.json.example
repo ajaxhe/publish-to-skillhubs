@@ -7,6 +7,14 @@
   "category": "productivity",
   "tags": ["cursor", "agent", "automation"],
   "changelog": "首次发布",
+  "platform_overrides": {
+    "skillhub": {
+      "displayName": "你的 Skill 中文名",
+      "summary": "一句话中文简介（商店列表展示）",
+      "description": "面向检索重写的描述：能力 + 适用场景 + 关键词",
+      "tags": ["中文标签1", "中文标签2"]
+    }
+  },
   "clawscan_note": "Brief note for ClawHub security scan (optional).",
   "pr_description": "Optional markdown body for agent-skills-hub PR.",
   "platforms": {

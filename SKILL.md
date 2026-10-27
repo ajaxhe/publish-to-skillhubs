@@ -26,6 +26,22 @@ homepage: https://github.com/ajaxhe/publish-to-skillhubs
 | [skillhub.cn](https://skillhub.cn)（腾讯，ClawHub 中文站） | `skillhub` | `skh_` API Token，需实名认证 |
 | [agent-skills-hub](https://github.com/agent-skills-hub/agent-skills-hub) | `agentskillshub` | `gh auth login`（PR） |
 
+## 统一凭证（所有平台一份文件）
+
+发布凭证集中存放在 **`~/.config/publish-to-skillhubs/credentials.json`**（600 权限，
+`PUBLISH_CREDENTIALS` 可改路径），脚本优先读它，各平台原生配置（`clawhub/config.json`、
+`~/.skhub/auth.json`、`~/.skills-hub/config.json`、`~/.skillhub/credentials.json`）只作兜底。
+
+```bash
+CRED=~/.agents/skills/publish-to-skillhubs/scripts/load-credentials.py
+python3 $CRED show                          # 掩码查看各平台配置状态
+python3 $CRED sync                          # 从各平台原生位置汇总补入统一文件
+python3 $CRED set skillhub token skh_xxx    # 写入/轮换单个字段
+```
+
+字段命名：`clawhub.token/registry`、`agentskillhub.token`、`skillshubai.apiKey/apiUrl`、
+`skillhub.token/host`。**该文件不要提交到任何仓库。**
+
 ## 快速开始
 
 ### 1. 为目标 skill 添加 `publish.json`
@@ -40,7 +56,30 @@ cp ~/.agents/skills/publish-to-skillhubs/templates/publish.json.example \
 必填字段：`skill_name`、`display_name`、`github_repo`。其余可自动推断。
 `changelog` 会作为各平台本次发布的变更说明（默认 `See README.md`）。
 
-### 2. 确保 skill 有公开 GitHub 仓库
+面向中文用户的平台（目前是 skillhub.cn）通过 `platform_overrides.<平台>` 单独给一套元数据，
+脚本会生成暂存副本、把这份元数据写进副本的 frontmatter 再上传，**不改动原 SKILL.md**
+（原 description 是给本地 Agent 做触发匹配的，取值目标不同）：
+
+```json
+"platform_overrides": {
+  "skillhub": {
+    "displayName": "产品演示视频剪辑",
+    "summary": "一句话中文简介（会展示在商店列表）",
+    "description": "面向检索重写的描述：能力 + 适用场景 + 关键词",
+    "tags": ["视频剪辑", "演示视频", "录屏"]
+  }
+}
+```
+
+### 2. 配好凭证
+
+```bash
+CRED=~/.agents/skills/publish-to-skillhubs/scripts/load-credentials.py
+python3 $CRED show     # 缺哪个平台就补哪个；先从原生位置自动汇总
+python3 $CRED sync
+```
+
+### 3. 确保 skill 有公开 GitHub 仓库
 
 ```bash
 cd /path/to/your-skill
@@ -48,7 +87,7 @@ git remote -v   # 应指向 github.com/<owner>/<repo>
 git push origin main
 ```
 
-### 3. 一键发布
+### 4. 一键发布
 
 ```bash
 bash ~/.agents/skills/publish-to-skillhubs/scripts/publish-to-skillhubs.sh \
@@ -67,7 +106,7 @@ bash ~/.agents/skills/publish-to-skillhubs/scripts/publish-to-skillhubs.sh \
   --skill-dir /path/to/your-skill --platform skillhub
 ```
 
-### 4. （可选）安装 GitHub Actions 自动发布
+### 5. （可选）安装 GitHub Actions 自动发布
 
 ```bash
 bash ~/.agents/skills/publish-to-skillhubs/scripts/install-workflow.sh \
@@ -158,6 +197,8 @@ ln -sf ~/.workbuddy/skills/sync-obsidian-to-lexiang \
 | `scripts/prepare-clawhub-staging.sh` | 创建 ClawHub 干净副本 |
 | `scripts/install-workflow.sh` | 复制 CI workflow 到目标 skill 仓库 |
 | `scripts/load-config.py` | 读取 publish.json + 自动推断 |
+| `scripts/load-credentials.py` | 统一凭证的读写/汇总/掩码查看 |
+| `scripts/apply-platform-meta.py` | 生成暂存副本：改写 frontmatter 元数据 + 过滤平台不接受的文件 |
 
 ## 参考
 

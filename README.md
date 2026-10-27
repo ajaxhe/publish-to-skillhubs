@@ -42,6 +42,19 @@ cp scripts/../templates/publish.json.example /path/to/your-skill/publish.json
 
 必填字段：`skill_name`、`display_name`、`github_repo`。其余可自动推断。
 
+**凭证统一管理**：所有平台 token 集中在 `~/.config/publish-to-skillhubs/credentials.json`（600 权限），
+用 `scripts/load-credentials.py` 读写，各平台原生配置仅作兜底：
+
+```bash
+CRED=scripts/load-credentials.py
+python3 $CRED show                        # 掩码查看各平台配置
+python3 $CRED sync                        # 从原生位置汇总补入
+python3 $CRED set skillhub token skh_xxx  # 写入/轮换
+```
+
+**平台专属元数据**：面向中文用户的平台（skillhub.cn）用 `platform_overrides.<平台>` 覆盖
+displayName/summary/description/tags，脚本会把它写进暂存副本再上传，不改动原 SKILL.md。
+
 `publish.json` 字段说明：
 
 ```json
@@ -112,6 +125,8 @@ bash scripts/setup-tokens.sh --repo owner/repo
 | `scripts/prepare-clawhub-staging.sh` | 创建 ClawHub 干净副本（剔除 `out/`、缓存、私有配置） |
 | `scripts/install-workflow.sh` | 复制 CI workflow 到目标 skill 仓库 |
 | `scripts/load-config.py` | 读取 `publish.json` + 自动推断字段 |
+| `scripts/load-credentials.py` | 统一凭证（读写 / 汇总 / 掩码查看 / export-env） |
+| `scripts/apply-platform-meta.py` | 生成暂存副本：改写平台专属元数据 + 过滤平台不接受的文件 |
 
 ---
 
@@ -142,6 +157,7 @@ ln -s ~/.workbuddy/skills/publish-to-skillhubs ~/.agents/skills/publish-to-skill
 ## 6. 安全说明
 
 - 本仓库**不包含任何真实密钥 / 凭证**：`setup-tokens.sh` 仅负责把本地已有 token 写入目标仓库的 GitHub Secrets，自身不硬编码任何 secret。
+- 统一凭证放在 `~/.config/publish-to-skillhubs/credentials.json`（600 权限，仓库之外），不要把该文件复制进任何 skill 目录或提交。
 - ClawHub 发布走干净副本，默认排除 `out/`、构建产物与私有配置，避免隐私外泄。
 - 目标 skill 发布前请确认 `.gitignore` 已排除 `config.json`、`auth.json`、token 文件等。
 
