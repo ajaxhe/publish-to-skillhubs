@@ -5,7 +5,7 @@
 #   bash publish-to-skillhubs.sh --skill-dir /path/to/skill [options]
 #
 # Options:
-#   --platform all|clawhub|agentskillhub|skillshubai|agentskillshub
+#   --platform all|clawhub|agentskillhub|skillshubai|skillhub|agentskillshub
 #   --dry-run
 #   --yes              跳过交互确认
 #   --skip-git-push    不自动 commit/push
@@ -77,6 +77,7 @@ TAGS="$(read_cfg_list tags)"
 CLAWSCAN_NOTE="$(read_cfg clawscan_note)"
 CLAWHUB_OWNER="$(read_cfg clawhub_owner)"
 PR_DESCRIPTION="$(read_cfg pr_description)"
+CHANGELOG_TEXT="$(read_cfg changelog)"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'; BOLD='\033[1m'
 log_info()    { echo -e "${GREEN}✅${NC} $*"; }
@@ -258,7 +259,7 @@ def get_field(name, text):
     return val
 
 tags_m = re.search(r'^tags:\s*(.+)$', fm, re.MULTILINE)
-tags = [t.strip() for t in (tags_m.group(1).split(",") if tags_m else [])]
+tags = [t.strip().strip("'\"") for t in (tags_m.group(1) if tags_m else "").strip().strip("[]").split(",") if t.strip()]
 slug = get_field("name", fm)
 
 payload = {
@@ -383,6 +384,68 @@ publish_clawhub() {
   fi
 }
 
+publish_skillhub() {
+  log_section "Platform: skillhub.cn"
+  if [ "$(platform_enabled skillhub)" != "True" ]; then
+    log_warn "publish.json 中已禁用 skillhub"; return
+  fi
+
+  if ! command -v skillhub &>/dev/null; then
+    log_error "未安装 skillhub CLI"
+    echo "  → curl -fsSL https://skillhub.cn/install/install.sh | bash -s -- --cli-only"
+    echo "  → 确保 \$HOME/.local/bin 在 PATH 中（echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc）"
+    return 1
+  fi
+
+  if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] skillhub publish '$SKILL_DIR' --version '$SKILL_VERSION' --changelog '$CHANGELOG_TEXT' --dry-run"
+    return
+  fi
+
+  # 元数据预检：SkillHub 强校验 front matter 的 slug / version / displayName。
+  # --dry-run 只校验 metadata、不上传，几秒钟出结果。
+  local precheck
+  if ! precheck=$(skillhub publish "$SKILL_DIR" --version "$SKILL_VERSION" --dry-run 2>&1); then
+    log_error "SkillHub 元数据预检失败：$(printf '%s\n' "$precheck" | grep -v '发现新版本' | tail -1)"
+    echo "  → SKILL.md front matter 必须含：slug（kebab-case，全网唯一）、version（SemVer）、displayName"
+    echo "  → summary / description / license 建议补上；tags 要写成行内列表 tags: [a, b]"
+    return 1
+  fi
+
+  # skh_ token 只能来自 --token / SKILLHUB_TOKEN / ~/.skillhub/credentials.json，
+  # 没有浏览器 OAuth 兜底；非交互模式不引导登录，直接给准确下一步。
+  if ! skillhub auth whoami >/dev/null 2>&1; then
+    log_warn "未登录 skillhub.cn"
+    echo "  → https://skillhub.cn/dashboard/keys 创建 API Token（skh_ 开头，需先完成实名认证）"
+    echo "  → skillhub login --key skh_xxx --host https://api.skillhub.cn"
+    echo "  → 或设置环境变量 SKILLHUB_TOKEN"
+    return 1
+  fi
+
+  local out status
+  out=$(skillhub publish "$SKILL_DIR" \
+    --version "$SKILL_VERSION" \
+    --changelog "$CHANGELOG_TEXT" 2>&1) || status=$?
+  printf '%s\n' "$out" | grep -v '发现新版本'
+
+  if [ "${status:-0}" -ne 0 ]; then
+    # 幂等重跑：同版本重复发布视为成功；slug 被占用（409）不算成功
+    if printf '%s' "$out" | grep -qE "版本.*已存在|already exists"; then
+      log_info "skillhub.cn 版本 ${SKILL_VERSION} 已存在，无需重复发布"
+      return 0
+    fi
+    log_error "skillhub.cn 发布失败（见上方错误码：401 token 失效 / 403 未实名 / 409 slug 占用 / 429 限频）"
+    return 1
+  fi
+
+  local pub_url
+  pub_url=$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*url:[[:space:]]*//p' | head -1)
+  if printf '%s' "$out" | grep -q "pending_review"; then
+    log_warn "已提交，等待平台审核（三线安全审核通过后自动上架）"
+  fi
+  log_info "skillhub.cn → ${pub_url:-https://skillhub.cn/skills/${SKILL_NAME}}"
+}
+
 run_platform() {
   local platform="$1"
   shift
@@ -449,15 +512,17 @@ case "$TARGET_PLATFORM" in
     run_platform agentskillhub.dev publish_agentskillhub
     run_platform skills-hub.ai publish_skillshubai
     run_platform clawhub.ai publish_clawhub
+    run_platform skillhub.cn publish_skillhub
     run_platform agent-skills-hub publish_agentskillshub_pr
     ;;
   agentskillhub)   run_platform agentskillhub.dev publish_agentskillhub ;;
   skillshubai)     run_platform skills-hub.ai publish_skillshubai ;;
   clawhub)         run_platform clawhub.ai publish_clawhub ;;
+  skillhub)        run_platform skillhub.cn publish_skillhub ;;
   agentskillshub)  run_platform agent-skills-hub publish_agentskillshub_pr ;;
   *)
     log_error "未知平台: $TARGET_PLATFORM"
-    echo "支持: all | agentskillhub | skillshubai | clawhub | agentskillshub"
+    echo "支持: all | agentskillhub | skillshubai | clawhub | skillhub | agentskillshub"
     exit 1
     ;;
 esac
@@ -473,6 +538,7 @@ echo "📍 平台链接："
 echo "  clawhub.ai        → https://clawhub.ai/${CLAWHUB_OWNER}/skills/${SKILL_NAME}"
 echo "  agentskillhub.dev → https://agentskillhub.dev/u/${GITHUB_REPO%%/*}/sk/${SKILL_NAME}"
 echo "  skills-hub.ai     → https://skills-hub.ai/skills/${SKILL_NAME}"
+echo "  skillhub.cn       → https://skillhub.cn/skills/${SKILL_NAME}"
 echo "  agent-skills-hub  → https://github.com/agent-skills-hub/agent-skills-hub/pulls"
 
 [ "${#FAILED_PLATFORMS[@]}" -eq 0 ]

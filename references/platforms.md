@@ -24,6 +24,22 @@
 - **category 示例**: productivity, research, development, writing
 - **链接**: https://skills-hub.ai/skills/{skill_name}
 
+## skillhub.cn
+
+- **定位**: 腾讯运营的国内 Skill 商店，ClawHub 中文站；个人/企业均可发布，有 SkillPay 按调用变现
+- **CLI**: `curl -fsSL https://skillhub.cn/install/install.sh | bash -s -- --cli-only`
+  （装到 `~/.local/bin/skillhub`；PATH 未生效时用绝对路径）
+- **登录**: `skillhub login --key skh_xxx --host https://api.skillhub.cn`
+  Token 在 [个人中心 → API keys](https://skillhub.cn/dashboard/keys) 创建，**必须先完成实名认证**（人脸核身）
+- **发布**: `skillhub publish <skill-dir> [--version x.y.z] [--changelog "本次改动"] [--dry-run] [--json]`
+- **必填 frontmatter**: `slug`（kebab-case，全网唯一）、`version`（SemVer）、`displayName`；
+  建议 `summary`、`description`、`tags`（**行内列表** `[a, b]`）、`license`、`homepage`
+- **打包**: 整个目录逐文件上传，自动排除 `.git/.idea/.vscode/node_modules/__pycache__`、`*.pyc/.DS_Store`，跳过软连接
+- **审核**: 发布返回 `status=pending_review`，经「内容合规 + 科恩实验室漏洞扫描 + 云鼎 AI 模型安全评估」三线审核后自动上架
+- **错误码**: 401 token 失效 / 403 未实名 / 409 slug 被占用 / 429 限频（约 1 分钟后重试）
+- **链接**: https://skillhub.cn/skills/<slug>
+- **凭证位置**: `~/.skillhub/credentials.json` 的 `user.token`；也认 `SKILLHUB_TOKEN` 环境变量与 `--token`
+
 ## agent-skills-hub (GitHub)
 
 - **仓库**: https://github.com/agent-skills-hub/agent-skills-hub
@@ -37,6 +53,7 @@
 | `CLAWHUB_TOKEN` | `~/Library/Application Support/clawhub/config.json` → `.token` |
 | `AGENTSKILLHUB_TOKEN` | `~/.skhub/auth.json` |
 | `SKILLSHUBAI_TOKEN` | skills-hub.ai API Key |
+| `SKILLHUB_TOKEN` | `~/.skillhub/credentials.json` → `.user.token`（`skh_` 开头） |
 
 运行 `scripts/setup-tokens.sh --repo owner/repo` 一次性写入。
 
@@ -51,6 +68,7 @@
 | `tags` | 可选 | 各平台标签 |
 | `category` | 可选 | skills-hub.ai 分类 |
 | `clawhub_owner` | 可选 | ClawHub 发布者 handle；默认取 `github_repo` owner |
+| `changelog` | 可选 | 本次发布的变更说明（skillhub.cn / ClawHub 会用到），默认 `See README.md` |
 | `platforms.*.enabled` | 可选 | 按平台开关 |
 | `clawscan_note` | 可选 | 给 ClawHub ClawScan 的说明：脚本会跑 ffmpeg/OpenCV、开无头浏览器、写本地目录时务必写清楚，减少被判可疑 |
 

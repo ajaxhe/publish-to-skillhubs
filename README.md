@@ -1,12 +1,12 @@
 # publish-to-skillhubs
 
-> 将任意 Agent Skill 一键发布到 ClawHub、agentskillhub.dev、skills-hub.ai、agent-skills-hub 等多平台。
+> 将任意 Agent Skill 一键发布到 ClawHub、agentskillhub.dev、skills-hub.ai、skillhub.cn、agent-skills-hub 等多平台。
 > 目标 skill 只需提供 `SKILL.md` + 可选 `publish.json`，即可推送到各 Agent Skill 市场。
 
 - **Skill 名**：`publish-to-skillhubs`
-- **版本**：`1.0.0`
+- **版本**：`1.1.0`
 - **作者**：ajaxhe
-- **标签**：publish, clawhub, skillhub, automation, ci
+- **标签**：publish, clawhub, skillhub, skillhub.cn, automation, ci
 
 ---
 
@@ -19,6 +19,7 @@
 | [clawhub.ai](https://clawhub.ai) | `clawhub` | `clawhub login`（GitHub OAuth） |
 | [agentskillhub.dev](https://agentskillhub.dev) | `agentskillhub` | `skhub login` 或 Web 导入 |
 | [skills-hub.ai](https://skills-hub.ai) | `skillshubai` | API Key |
+| [skillhub.cn](https://skillhub.cn)（腾讯，ClawHub 中文站） | `skillhub` | `skh_` API Token（需实名认证） |
 | [agent-skills-hub](https://github.com/agent-skills-hub/agent-skills-hub) | `agentskillshub` | `gh auth login`（提 PR） |
 
 **特性**
@@ -51,12 +52,14 @@ cp scripts/../templates/publish.json.example /path/to/your-skill/publish.json
   "github_repo": "owner/your-skill-name",
   "category": "productivity",
   "tags": ["cursor", "agent", "automation"],
+  "changelog": "首次发布",
   "clawscan_note": "Brief note for ClawHub security scan (optional).",
   "pr_description": "Optional markdown body for agent-skills-hub PR.",
   "platforms": {
     "clawhub":       { "enabled": true },
     "agentskillhub": { "enabled": true },
     "skillshubai":   { "enabled": true },
+    "skillhub":      { "enabled": true },
     "agentskillshub":{ "enabled": false }
   }
 }
@@ -83,6 +86,9 @@ bash scripts/publish-to-skillhubs.sh --skill-dir /path/to/your-skill --dry-run
 
 # 仅发 ClawHub
 bash scripts/publish-to-skillhubs.sh --skill-dir /path/to/your-skill --platform clawhub
+
+# 仅发 skillhub.cn（先 skillhub login --key skh_xxx）
+bash scripts/publish-to-skillhubs.sh --skill-dir /path/to/your-skill --platform skillhub
 
 # 非交互环境
 bash scripts/publish-to-skillhubs.sh --skill-dir /path/to/your-skill --platform all --yes
@@ -112,7 +118,7 @@ bash scripts/setup-tokens.sh --repo owner/repo
 ## 4. Agent 执行流程（供调用方参考）
 
 1. **定位 skill 目录**：解析用户给出的路径；若是软链则 `readlink -f` 到真实目录。
-2. **发布前检查**：`SKILL.md` frontmatter 含 `name`/`description`；建议含 `version`/`tags`/`category`；无私有文件被提交；GitHub 仓库为 public；本地变更已 push。
+2. **发布前检查**：`SKILL.md` frontmatter 含 `name`/`description`；建议含 `version`/`tags`/`category`；发 skillhub.cn 还需 `slug`/`displayName`（`tags` 用行内列表）；无私有文件被提交；GitHub 仓库为 public；本地变更已 push。
 3. **ClawHub 特殊处理**：若 skill 含图片/PDF/`config.json`，先用 `prepare-clawhub-staging.sh` 生成干净副本，再从副本发布，绝不改动原始目录。
 4. **执行发布**：`bash publish-to-skillhubs.sh --skill-dir <绝对路径> --platform all`（非交互加 `--yes`）。
 5. **汇报结果**：列出各平台链接 `https://<平台>/skills/<skill_name>`。

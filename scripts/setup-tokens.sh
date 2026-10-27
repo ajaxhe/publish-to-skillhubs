@@ -88,6 +88,30 @@ else
   fi
 fi
 
+log_section "Token 4: skillhub.cn"
+SKILLHUB_CRED="$HOME/.skillhub/credentials.json"
+SKILLHUB_TOKEN=""
+if [ -f "$SKILLHUB_CRED" ]; then
+  SKILLHUB_TOKEN=$(python3 -c "
+import json
+print((json.load(open('$SKILLHUB_CRED')).get('user') or {}).get('token',''))
+" 2>/dev/null)
+fi
+if [ -z "$SKILLHUB_TOKEN" ] && [ -n "${SKILLHUB_TOKEN_ENV:-}" ]; then
+  SKILLHUB_TOKEN="$SKILLHUB_TOKEN_ENV"
+fi
+if [ -z "$SKILLHUB_TOKEN" ]; then
+  echo "访问 https://skillhub.cn/dashboard/keys 创建 API Token（skh_ 开头，需先实名认证）"
+  read -r -p "粘贴 skh_ Token（留空跳过）: " SKILLHUB_INPUT
+  SKILLHUB_TOKEN="$SKILLHUB_INPUT"
+fi
+if [ -n "$SKILLHUB_TOKEN" ]; then
+  echo "$SKILLHUB_TOKEN" | gh secret set SKILLHUB_TOKEN --repo "$REPO"
+  log_info "SKILLHUB_TOKEN 已写入"
+else
+  log_warn "跳过 skillhub.cn（未提供 skh_ Token）"
+fi
+
 log_section "已配置的 Secrets"
-gh secret list --repo "$REPO" 2>/dev/null | grep -E "CLAWHUB|AGENTSKILLHUB|SKILLSHUBAI" || true
+gh secret list --repo "$REPO" 2>/dev/null | grep -E "CLAWHUB|AGENTSKILLHUB|SKILLSHUBAI|SKILLHUB" || true
 log_info "完成！推送 main 后 GitHub Actions 将自动发布。"

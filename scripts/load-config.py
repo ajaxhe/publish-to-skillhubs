@@ -47,6 +47,20 @@ def git_remote_repo(skill_dir: Path) -> str:
     return ""
 
 
+def parse_tags(value: object) -> list[str]:
+    """把 tags 统一成 list。
+
+    兼容三种写法：JSON list、`a, b, c` 逗号串、YAML 行内列表 `[a, b]`
+    （skillhub.cn CLI 只认行内列表，会把 `tags:` 直接当数组上传）。
+    """
+    if isinstance(value, list):
+        return [str(item).strip().strip("'\"") for item in value if str(item).strip()]
+    raw = str(value or "").strip()
+    if raw.startswith("[") and raw.endswith("]"):
+        raw = raw[1:-1]
+    return [item.strip().strip("'\"") for item in raw.split(",") if item.strip()]
+
+
 def load_config(skill_dir: Path) -> dict:
     skill_dir = skill_dir.resolve()
     skill_md = skill_dir / "SKILL.md"
@@ -64,12 +78,9 @@ def load_config(skill_dir: Path) -> dict:
     display_name = cfg.get("display_name") or skill_name.replace("-", " ").title()
     version = cfg.get("version") or fm.get("version") or "1.0.0"
     category = cfg.get("category") or fm.get("category") or "productivity"
-    tags = cfg.get("tags") or []
-    if isinstance(tags, str):
-        tags = [t.strip() for t in tags.split(",") if t.strip()]
-    if not tags and fm.get("tags"):
-        tags = [t.strip() for t in fm["tags"].split(",") if t.strip()]
+    tags = parse_tags(cfg.get("tags") or fm.get("tags") or [])
 
+    changelog = cfg.get("changelog") or "See README.md"
     clawscan_note = cfg.get("clawscan_note", "")
     clawhub_owner = cfg.get("clawhub_owner") or (github_repo.split("/", 1)[0] if "/" in github_repo else "")
     pr_description = cfg.get("pr_description", f"Add {skill_name} skill.\n\nSource: https://github.com/{github_repo}")
@@ -92,6 +103,7 @@ def load_config(skill_dir: Path) -> dict:
         "tags": tags,
         "github_repo": github_repo,
         "github_repo_url": f"https://github.com/{github_repo}" if github_repo else "",
+        "changelog": changelog,
         "clawscan_note": clawscan_note,
         "clawhub_owner": clawhub_owner,
         "pr_description": pr_description,

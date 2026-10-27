@@ -1,12 +1,15 @@
 ---
 name: publish-to-skillhubs
-description: 将任意 Agent Skill 一键发布到 ClawHub、agentskillhub.dev、skills-hub.ai、
-  agent-skills-hub 等平台。支持 publish.json 配置、ClawHub 干净副本、GitHub Actions CI。
-  当用户提到「发布 skill」「提交到 ClawHub/SkillHub」「扩大 skill 影响力」 「publish to skill
-  platforms」时使用。
-version: 1.0.0
+slug: publish-to-skillhubs
+displayName: Publish to Skill Hubs
+summary: 把本地 Agent Skill 一键分发到 ClawHub、agentskillhub.dev、skills-hub.ai、skillhub.cn、agent-skills-hub，支持 publish.json 配置、ClawHub 干净副本与 GitHub Actions CI
+description: 将任意 Agent Skill 一键发布到 ClawHub、agentskillhub.dev、skills-hub.ai、skillhub.cn、agent-skills-hub 等平台。支持 publish.json 配置、ClawHub 干净副本、GitHub Actions CI。当用户提到「发布 skill」「提交到 ClawHub/SkillHub/skillhub.cn」「扩大 skill 影响力」「publish to skill platforms」时使用。
+version: 1.1.0
 author: ajaxhe
-tags: publish, clawhub, skillhub, automation, ci
+category: productivity
+tags: [publish, clawhub, skillhub, automation, ci]
+license: MIT
+homepage: https://github.com/ajaxhe/publish-to-skillhubs
 ---
 
 # publish-to-skillhubs
@@ -20,6 +23,7 @@ tags: publish, clawhub, skillhub, automation, ci
 | [clawhub.ai](https://clawhub.ai) | `clawhub` | `clawhub login` |
 | [agentskillhub.dev](https://agentskillhub.dev) | `agentskillhub` | `skhub login` 或 Web 导入 |
 | [skills-hub.ai](https://skills-hub.ai) | `skillshubai` | API Key |
+| [skillhub.cn](https://skillhub.cn)（腾讯，ClawHub 中文站） | `skillhub` | `skh_` API Token，需实名认证 |
 | [agent-skills-hub](https://github.com/agent-skills-hub/agent-skills-hub) | `agentskillshub` | `gh auth login`（PR） |
 
 ## 快速开始
@@ -34,6 +38,7 @@ cp ~/.agents/skills/publish-to-skillhubs/templates/publish.json.example \
 ```
 
 必填字段：`skill_name`、`display_name`、`github_repo`。其余可自动推断。
+`changelog` 会作为各平台本次发布的变更说明（默认 `See README.md`）。
 
 ### 2. 确保 skill 有公开 GitHub 仓库
 
@@ -56,6 +61,10 @@ bash ~/.agents/skills/publish-to-skillhubs/scripts/publish-to-skillhubs.sh \
 # 仅 ClawHub
 bash ~/.agents/skills/publish-to-skillhubs/scripts/publish-to-skillhubs.sh \
   --skill-dir /path/to/your-skill --platform clawhub
+
+# 仅 skillhub.cn（先 skillhub login --key skh_xxx）
+bash ~/.agents/skills/publish-to-skillhubs/scripts/publish-to-skillhubs.sh \
+  --skill-dir /path/to/your-skill --platform skillhub
 ```
 
 ### 4. （可选）安装 GitHub Actions 自动发布
@@ -82,6 +91,8 @@ bash ~/.agents/skills/publish-to-skillhubs/scripts/setup-tokens.sh \
 
 - [ ] `SKILL.md` frontmatter 含 `name`、`description`（≤200 字兼容 Claude.ai）
 - [ ] 建议含 `version`、`tags`、`category`（skills-hub.ai 需要 category）
+- [ ] 要发 skillhub.cn 的，frontmatter 必须另有 `slug`（kebab-case，全网唯一）、`displayName`、`version`（SemVer），
+      并建议补 `summary`、`license`、`homepage`；`tags` 写成行内列表 `tags: [a, b]`（否则平台收不到标签数组）
 - [ ] 无 `config.json` 等私有文件被提交（应在 `.gitignore`）
 - [ ] GitHub 仓库为 **public**（agentskillhub 需公开仓库）
 - [ ] 本地变更已 commit & push
@@ -112,6 +123,9 @@ bash "$PUBLISH_SKILLHUBS" --skill-dir "<绝对路径>" --platform all
 最终汇总失败平台并返回非零退出码。agentskillhub.dev 必须先调用仓库 analyze API，
 使用平台返回的真实路径（根目录 Skill 的路径是空字符串，不是 `.`）。
 
+skillhub.cn 走官方 CLI（`skillhub publish <dir>`），没有 OAuth 兜底：
+未装 CLI / 未登录 / 缺 frontmatter 时脚本只报原因和下一步命令，不尝试交互登录。
+
 ### Step 4：汇报结果
 
 只列出真实结果；不得在失败后仍打印“完成”。各平台链接：
@@ -119,6 +133,10 @@ bash "$PUBLISH_SKILLHUBS" --skill-dir "<绝对路径>" --platform all
 - `https://clawhub.ai/<clawhub_owner>/skills/<skill_name>`
 - `https://agentskillhub.dev/u/<username>/sk/<skill_name>`
 - `https://skills-hub.ai/skills/<skill_name>`
+- `https://skillhub.cn/skills/<slug>`
+
+注意各平台的「审核」不等于失败：ClawHub 的 `pending.publication`、skills-hub.ai 的
+`PENDING_REVIEW`、skillhub.cn 的 `status=pending_review` 都是已提交待审，汇报时要写清楚。
 
 ## 项目内软链模式（贾维斯等）
 

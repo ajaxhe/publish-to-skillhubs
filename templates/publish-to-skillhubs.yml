@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       platforms:
-        description: "clawhub,agentskillhub,skillshubai,pr or all"
+        description: "clawhub,agentskillhub,skillshubai,skillhub,pr or all"
         required: false
         default: "all"
       dry_run:
@@ -29,6 +29,7 @@ jobs:
       display_name: ${{ steps.cfg.outputs.display_name }}
       version: ${{ steps.cfg.outputs.version }}
       tags: ${{ steps.cfg.outputs.tags }}
+      changelog: ${{ steps.cfg.outputs.changelog }}
       clawscan_note: ${{ steps.cfg.outputs.clawscan_note }}
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +60,7 @@ jobs:
           if isinstance(tags, list):
               tags = ','.join(tags)
           note = cfg.get('clawscan_note', '')
+          changelog = cfg.get('changelog', 'See README.md')
 
           out = os.environ['GITHUB_OUTPUT']
           with open(out, 'a') as f:
@@ -66,6 +68,7 @@ jobs:
               f.write(f"display_name={display}\n")
               f.write(f"version={version}\n")
               f.write(f"tags={tags}\n")
+              f.write(f"changelog={changelog}\n")
               f.write(f"clawscan_note={note}\n")
           PY
 
@@ -164,9 +167,14 @@ jobs:
               )
               try:
                   with urllib.request.urlopen(req) as resp:
-                      return resp.status, json.loads(resp.read())
+                      raw = resp.read()
+                      return resp.status, (json.loads(raw) if raw else {})
               except urllib.error.HTTPError as e:
-                  return e.code, json.loads(e.read())
+                  raw = e.read()
+                  try:
+                      return e.code, (json.loads(raw) if raw else {})
+                  except json.JSONDecodeError:
+                      return e.code, {"error": raw.decode(errors="replace")[:500]}
 
           code, data = api("GET", f"/{slug}")
           if code == 404:
@@ -179,3 +187,22 @@ jobs:
                   api("POST", f"/{slug}/publish", {})
           print(f"skills-hub HTTP {code}: {data.get('status') or data.get('error')}")
           PY
+
+  publish-skillhub:
+    needs: load-config
+    name: skillhub.cn
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.platforms == '' || github.event.inputs.platforms == 'all' || contains(github.event.inputs.platforms, 'skillhub') }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SkillHub CLI
+        run: |
+          curl -fsSL https://skillhub.cn/install/install.sh | bash -s -- --cli-only
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - env:
+          SKILLHUB_TOKEN: ${{ secrets.SKILLHUB_TOKEN }}
+        run: |
+          [ -z "$SKILLHUB_TOKEN" ] && echo "⚠️ SKILLHUB_TOKEN not set" && exit 0
+          [ "${{ inputs.dry_run }}" = "true" ] && echo "[DRY RUN]" && exit 0
+          skillhub publish . --version "${{ needs.load-config.outputs.version }}" --changelog "${{ needs.load-config.outputs.changelog }}"
+          # 平台返回 status=pending_review 即已提交，需过三线安全审核才公开

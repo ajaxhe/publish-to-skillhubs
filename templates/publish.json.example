@@ -6,12 +6,14 @@
   "clawhub_owner": "owner",
   "category": "productivity",
   "tags": ["cursor", "agent", "automation"],
+  "changelog": "首次发布",
   "clawscan_note": "Brief note for ClawHub security scan (optional).",
   "pr_description": "Optional markdown body for agent-skills-hub PR.",
   "platforms": {
     "clawhub": { "enabled": true },
     "agentskillhub": { "enabled": true },
     "skillshubai": { "enabled": true },
+    "skillhub": { "enabled": true },
     "agentskillshub": { "enabled": false }
   }
 }
