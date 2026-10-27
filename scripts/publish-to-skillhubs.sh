@@ -511,11 +511,28 @@ for key, value in meta.items():
     return 1
   fi
 
-  local out status
-  out=$(skillhub publish "$TARGET_DIR" \
-    --version "$SKILL_VERSION" \
-    --changelog "$CHANGELOG_TEXT" 2>&1) || status=$?
-  printf '%s\n' "$out" | grep -v '发现新版本'
+  local out status attempt=1 max_attempts=${SKILLHUB_MAX_ATTEMPTS:-3}
+  while : ; do
+    status=0
+    out=$(skillhub publish "$TARGET_DIR" \
+      --version "$SKILL_VERSION" \
+      --changelog "$CHANGELOG_TEXT" 2>&1) || status=$?
+    printf '%s\n' "$out" | grep -v '发现新版本'
+    # 平台限频（429 / 请求过于频繁）：等 60s 重试，最多 SKILLHUB_MAX_ATTEMPTS 次
+    if printf '%s' "$out" | grep -qE "频率过高|请求过于频繁|429"; then
+      if [ "$attempt" -lt "$max_attempts" ]; then
+        local wait_s=${SKILLHUB_RETRY_WAIT:-60}
+        log_warn "skillhub.cn 限频，${wait_s}s 后重试（${attempt}/${max_attempts}）"
+        sleep "$wait_s"
+        attempt=$((attempt + 1))
+        continue
+      fi
+      log_error "skillhub.cn 持续限频（已重试 ${max_attempts} 次），请隔几分钟再发；平台按 token/IP 限发布频率"
+      [ -n "$STAGING_ROOT" ] && rm -rf "$STAGING_ROOT"
+      return 1
+    fi
+    break
+  done
 
   if [ "${status:-0}" -ne 0 ]; then
     [ -n "$STAGING_ROOT" ] && rm -rf "$STAGING_ROOT"

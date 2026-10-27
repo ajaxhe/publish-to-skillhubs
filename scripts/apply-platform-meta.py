@@ -24,12 +24,25 @@ import shutil
 import sys
 from pathlib import Path
 
-EXCLUDE_DIRS = {".git", ".idea", ".vscode", "node_modules", "__pycache__", ".workbuddy"}
+EXCLUDE_DIRS = {
+    ".git", ".github", ".idea", ".vscode", "node_modules", "__pycache__", ".workbuddy",
+    # 运行时产物 / 样例数据：体积大且属于使用者本地状态，不该进 skill 包
+    "articles", "output", "out", "projects", "dist", "build",
+    ".venv", "venv", ".pytest_cache", ".mypy_cache", "coverage", ".cache",
+}
 EXCLUDE_SUFFIXES = (".pyc", ".DS_Store")
-EXCLUDE_FILES = {"Thumbs.db", ".DS_Store", "publish.json", ".gitignore"}
+EXCLUDE_FILES = {"Thumbs.db", ".DS_Store", "publish.json", ".gitignore", "config.json"}
 # skillhub.cn 服务端按文件类型校验，无扩展名文件（LICENSE 等）会被拒：
 # "不允许的文件类型: LICENSE"。许可证已在 frontmatter 的 license 字段声明，副本里无需带。
 KEEP_EXTENSIONLESS = {"SKILL.md", "README.md", "README.zh.md"}
+# 只带"能读懂 + 能跑"的文本类型，二进制素材（图片/PDF/压缩包）不带：
+# 平台本就不收无扩展名与未知类型，图片又会把包撑大（样例库常有几百 MB）
+ALLOWED_SUFFIXES = (
+    ".md", ".markdown", ".txt", ".py", ".sh", ".bash", ".zsh",
+    ".json", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".conf",
+    ".html", ".htm", ".css", ".js", ".mjs", ".ts", ".csv", ".srt",
+    ".example", ".template", ".tmpl",
+)
 
 
 def _skip_file(name: str) -> bool:
@@ -38,7 +51,9 @@ def _skip_file(name: str) -> bool:
     if name in KEEP_EXTENSIONLESS:
         return False
     # 无扩展名（含 . 开头的隐藏文件）一律跳过
-    return "." not in name.lstrip(".")
+    if "." not in name.lstrip("."):
+        return True
+    return not name.lower().endswith(ALLOWED_SUFFIXES)
 
 
 def copy_tree(src: Path, dst: Path) -> list[str]:
@@ -137,11 +152,16 @@ def main() -> int:
 
     skipped = copy_tree(src, dst)
     applied = rewrite_frontmatter(dst / "SKILL.md", meta) if meta else []
+    kept = [p for p in dst.rglob("*") if p.is_file()]
+    total = sum(p.stat().st_size for p in kept)
     print(f"暂存副本: {dst}")
     if applied:
         print("已覆盖 frontmatter 字段: " + ", ".join(applied))
+    print(f"包内容: {len(kept)} 个文件 / {total / 1024 / 1024:.2f} MB")
     if skipped:
-        print("已跳过（平台不接受的文件类型）: " + ", ".join(sorted(set(skipped))))
+        preview = sorted(set(skipped))
+        shown = ", ".join(preview[:6]) + (f" …共 {len(preview)} 项" if len(preview) > 6 else "")
+        print("已跳过（平台不接受 / 非 skill 本体）: " + shown)
     return 0
 
 

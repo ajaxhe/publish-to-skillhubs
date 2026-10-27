@@ -42,7 +42,12 @@
   不动原 SKILL.md（原 description 是给本地 Agent 做触发匹配的）
 - **审核**: 发布返回 `status=pending_review`，经「内容合规 + 科恩实验室漏洞扫描 + 云鼎 AI 模型安全评估」三线审核后自动上架；
   审核期间 `tags` 立刻生效，而 `displayName`/`summary` 等仍显示上一个已上架版本的元数据
-- **错误码**: 401 token 失效 / 403 未实名 / 409 slug 被占用 / 429 限频（约 1 分钟后重试）
+- **错误码**: 401 token 失效 / 403 未实名 / 409 slug 被占用 / 429 限频
+- **429 限频实测**: 连续发 4 个 skill（每个约 5s）时第 4 个被拒（按 token/IP 限发布频率）；脚本已内置退避重试
+  （`SKILLHUB_RETRY_WAIT` 默认 60s，`SKILLHUB_MAX_ATTEMPTS` 默认 3）
+- **生效时序**: `displayName` / `summary` / `tags` 发布后立刻生效；`latestVersion` 要等三线审核通过才切到新版本
+- **包内容过滤**: 必须只带 skill 本体 —— 运行时/样例目录（`articles/`、`output/`、`projects/`、`out/`、`dist/`、`build/`、`.venv/`）
+  和二进制素材（图片/PDF/压缩包）都不该进包（实测某 skill 工作目录 555MB，过滤后 0.41MB / 23 个文件）
 - **链接**: https://skillhub.cn/skills/<slug>
 - **凭证位置**: `~/.skillhub/credentials.json` 的 `user.token`；也认 `SKILLHUB_TOKEN` 环境变量与 `--token`
 
